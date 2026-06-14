@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { SUKABUMI_MAP, createDemoSukabumiMarker, markerBounds, markerPopupLabel } from './map'
-import type { AreaMarker } from '@/types'
+import { SUKABUMI_MAP, createTrackedSukabumiMarker, markerBounds, markerPopupLabel } from './map'
+import type { AreaMarker, SurveyorLocation } from '@/types'
 
 const markers: AreaMarker[] = [
   {
@@ -50,26 +50,38 @@ describe('markerPopupLabel', () => {
   })
 })
 
-describe('createDemoSukabumiMarker', () => {
-  it('creates a sequential Sukabumi tracker marker for the active surveyor', () => {
-    const marker = createDemoSukabumiMarker({
+describe('createTrackedSukabumiMarker', () => {
+  it('creates a marker at the latest tracked device location with form details', () => {
+    const location: SurveyorLocation = {
+      surveyor_id: 'surveyor-1',
+      latitude: -6.9277,
+      longitude: 106.9296,
+      accuracy_meters: 18,
+      heading: null,
+      speed_mps: null,
+      captured_at: '2026-06-14T01:00:00.000Z',
+    }
+
+    const marker = createTrackedSukabumiMarker({
       existingCount: 3,
       surveyorId: 'surveyor-1',
-      createdAt: '2026-06-13T10:00:00.000Z',
+      location,
+      status: 'bagus',
+      notes: 'Warung padat transaksi dekat pasar',
+      photoUrl: 'surveyor-1/2026-06-14T01-01-00-000Z-survey.jpg',
+      createdAt: '2026-06-14T01:01:00.000Z',
     })
 
     expect(marker).toMatchObject({
       id: 'marker-4',
       surveyor_id: 'surveyor-1',
-      status: 'potensial',
-      notes: 'Marker tracking baru di Sukabumi #4',
-      photo_url: null,
-      created_at: '2026-06-13T10:00:00.000Z',
-      updated_at: '2026-06-13T10:00:00.000Z',
+      latitude: -6.9277,
+      longitude: 106.9296,
+      status: 'bagus',
+      notes: 'Warung padat transaksi dekat pasar',
+      photo_url: 'surveyor-1/2026-06-14T01-01-00-000Z-survey.jpg',
+      created_at: '2026-06-14T01:01:00.000Z',
+      updated_at: '2026-06-14T01:01:00.000Z',
     })
-    expect(marker.latitude).toBeGreaterThan(-6.95)
-    expect(marker.latitude).toBeLessThan(-6.9)
-    expect(marker.longitude).toBeGreaterThan(106.9)
-    expect(marker.longitude).toBeLessThan(106.97)
   })
 })

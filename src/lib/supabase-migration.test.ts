@@ -1,11 +1,16 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const migrationPath = join(process.cwd(), 'supabase/migrations/20260613150000_initial_foundation.sql')
+const migrationsDir = join(process.cwd(), 'supabase/migrations')
 
 describe('Supabase foundation migration', () => {
-  const sql = () => readFileSync(migrationPath, 'utf8')
+  const sql = () =>
+    readdirSync(migrationsDir)
+      .filter((file) => file.endsWith('.sql'))
+      .sort()
+      .map((file) => readFileSync(join(migrationsDir, file), 'utf8'))
+      .join('\n')
 
   it('creates the core lending tables', () => {
     const text = sql()
@@ -39,5 +44,17 @@ describe('Supabase foundation migration', () => {
     expect(text).toContain("values ('setoran-photos'")
     expect(text).toContain('create policy "users_upload_own_marker_photos"')
     expect(text).toContain('create policy "users_upload_own_setoran_photos"')
+  })
+
+  it('persists the latest foreground surveyor location for realtime map presence', () => {
+    const text = sql()
+
+    expect(text).toContain('create table if not exists public.surveyor_locations')
+    expect(text).toContain('accuracy_meters double precision')
+    expect(text).toContain('captured_at timestamptz not null')
+    expect(text).toContain('alter table public.surveyor_locations enable row level security')
+    expect(text).toContain('create policy "surveyor_upsert_own_location"')
+    expect(text).toContain('create publication supabase_realtime')
+    expect(text).toContain('alter publication supabase_realtime add table public.surveyor_locations')
   })
 })

@@ -1,23 +1,15 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
+import { locationAccuracyHint } from '@/lib/location'
 import type { LocationTrackingStatus, SurveyorLocation } from '@/types'
 
 export function useForegroundLocationTracking(surveyorId: string) {
-  const watchIdRef = useRef<number | null>(null)
   const [status, setStatus] = useState<LocationTrackingStatus>('idle')
   const [location, setLocation] = useState<SurveyorLocation | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  function stopTracking() {
-    if (watchIdRef.current !== null && 'geolocation' in navigator) {
-      navigator.geolocation.clearWatch(watchIdRef.current)
-    }
-    watchIdRef.current = null
-    setStatus('idle')
-  }
-
-  function startTracking() {
+  function readCurrentLocation() {
     setErrorMessage(null)
 
     if (!('geolocation' in navigator)) {
@@ -26,13 +18,10 @@ export function useForegroundLocationTracking(surveyorId: string) {
       return
     }
 
-    if (watchIdRef.current !== null) return
-
     setStatus('requesting')
-    watchIdRef.current = navigator.geolocation.watchPosition(
+    navigator.geolocation.getCurrentPosition(
       (position) => {
-        setStatus('tracking')
-        setLocation({
+        const nextLocation: SurveyorLocation = {
           surveyor_id: surveyorId,
           latitude: Number(position.coords.latitude.toFixed(6)),
           longitude: Number(position.coords.longitude.toFixed(6)),
@@ -40,13 +29,16 @@ export function useForegroundLocationTracking(surveyorId: string) {
           heading: position.coords.heading,
           speed_mps: position.coords.speed,
           captured_at: new Date().toISOString(),
-        })
+        }
+
+        setLocation(nextLocation)
+        setStatus('tracking')
+        setErrorMessage(locationAccuracyHint(nextLocation))
       },
       (error) => {
-        watchIdRef.current = null
         if (error.code === error.PERMISSION_DENIED) {
           setStatus('denied')
-          setErrorMessage('Izin lokasi ditolak. Aktifkan permission lokasi untuk tracking.')
+          setErrorMessage('Izin lokasi ditolak. Aktifkan permission lokasi untuk mengambil titik.')
           return
         }
         if (error.code === error.POSITION_UNAVAILABLE) {
@@ -59,20 +51,19 @@ export function useForegroundLocationTracking(surveyorId: string) {
       },
       {
         enableHighAccuracy: true,
-        maximumAge: 10000,
-        timeout: 15000,
+        maximumAge: 0,
+        timeout: 12000,
       }
     )
   }
 
-  useEffect(() => stopTracking, [])
-
   return {
     errorMessage,
-    isTracking: status === 'requesting' || status === 'tracking',
+    isTracking: status === 'requesting',
     location,
-    startTracking,
+    refreshLocation: readCurrentLocation,
+    startTracking: readCurrentLocation,
     status,
-    stopTracking,
+    stopTracking: () => setStatus('idle'),
   }
 }

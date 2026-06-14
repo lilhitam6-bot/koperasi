@@ -5,7 +5,15 @@ import { useEffect, useMemo, useRef } from 'react'
 import { AREA_STATUS_COLORS, markerBounds, markerPopupLabel, SUKABUMI_MAP } from '@/lib/map'
 import type { AreaMarker, SurveyorLocation } from '@/types'
 
-export function SukabumiLeafletMap({ markers, surveyorLocation }: { markers: AreaMarker[]; surveyorLocation?: SurveyorLocation | null }) {
+export function SukabumiLeafletMap({
+  focusLocationRequest = 0,
+  markers,
+  surveyorLocation,
+}: {
+  focusLocationRequest?: number
+  markers: AreaMarker[]
+  surveyorLocation?: SurveyorLocation | null
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<L.Map | null>(null)
   const layerRef = useRef<L.LayerGroup | null>(null)
@@ -82,28 +90,14 @@ export function SukabumiLeafletMap({ markers, surveyorLocation }: { markers: Are
       }).addTo(layer)
     }
 
-    if (bounds && surveyorLocation) {
-      map.fitBounds(
-        [
-          [
-            Math.min(bounds[0][0], surveyorLocation.latitude),
-            Math.min(bounds[0][1], surveyorLocation.longitude),
-          ],
-          [
-            Math.max(bounds[1][0], surveyorLocation.latitude),
-            Math.max(bounds[1][1], surveyorLocation.longitude),
-          ],
-        ],
-        { padding: [44, 44], maxZoom: 15 }
-      )
+    if (surveyorLocation) {
+      map.setView([surveyorLocation.latitude, surveyorLocation.longitude], 16)
     } else if (bounds) {
       map.fitBounds(bounds, { padding: [44, 44], maxZoom: 15 })
-    } else if (surveyorLocation) {
-      map.setView([surveyorLocation.latitude, surveyorLocation.longitude], 16)
     } else {
       map.setView(SUKABUMI_MAP.center, SUKABUMI_MAP.zoom)
     }
-  }, [bounds, markers, surveyorLocation])
+  }, [bounds, focusLocationRequest, markers, surveyorLocation])
 
   return (
     <div className="relative h-[58vh] min-h-[360px] overflow-hidden rounded-lg border border-ink/10 bg-field sm:h-[520px]">

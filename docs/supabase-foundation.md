@@ -10,11 +10,14 @@
 Files:
 - `supabase/config.toml`
 - `supabase/migrations/20260613150000_initial_foundation.sql`
+- `supabase/migrations/20260614094500_surveyor_locations.sql`
 - `src/lib/supabase-env.ts`
 - `src/lib/supabase-browser.ts`
 - `src/lib/supabase-server.ts`
+- `src/lib/storage.ts`
 - `src/lib/supabase-env.test.ts`
 - `src/lib/supabase-migration.test.ts`
+- `src/lib/storage.test.ts`
 
 Packages:
 - `@supabase/supabase-js`
@@ -24,7 +27,7 @@ Packages:
 
 ## 2. Migration Contents
 
-The initial migration creates:
+The migrations create:
 - `profiles`
 - `area_markers`
 - `area_status_history`
@@ -32,8 +35,7 @@ The initial migration creates:
 - `setoran`
 - `audit_log`
 - `push_subscriptions`
-
-Foreground location tracking is implemented in the UI, but the persistent Supabase table for live surveyor positions is intentionally not part of this first migration yet. Add `surveyor_locations` in the next integration step before syncing GPS to Supabase Realtime.
+- `surveyor_locations`
 
 It also adds:
 - Indexes for owner/surveyor queries
@@ -51,6 +53,7 @@ It also adds:
 - Area status history trigger
 - Nasabah score recalculation trigger on setoran changes
 - Auth user profile bootstrap trigger
+- Realtime publication membership for `surveyor_locations`
 
 ---
 
@@ -180,13 +183,15 @@ Done:
 - Env validation in place.
 - Browser/server client factories added.
 - Migration is test-covered for required schema/RLS/audit/storage features.
+- Login UI wired to Supabase Auth.
+- `surveyor_locations` table and Supabase Realtime publication.
+- Marker photo upload helper wired to the marker form.
+- Route guards and middleware.
 
 Not done yet:
-- Login UI wired to Supabase Auth.
-- `surveyor_locations` table and Supabase Realtime channel for foreground live GPS.
-- Route guards and middleware.
+- Supabase Realtime channel subscription for owner-facing live surveyor GPS.
 - Replacing seed data with Supabase queries.
-- Upload photo flow to Supabase Storage.
+- Setoran photo upload flow to Supabase Storage.
 - IndexedDB offline queue sync to Supabase.
 - Web Push Edge Functions.
 - PDF/Excel export Edge Functions.

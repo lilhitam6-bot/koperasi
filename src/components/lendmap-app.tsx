@@ -2,8 +2,11 @@
 
 import {
   Activity,
+  Camera,
   Cloud,
   Download,
+  LocateFixed,
+  LogOut,
   MapPinned,
   Menu,
   Plus,
@@ -11,10 +14,12 @@ import {
   ShieldCheck,
   Users,
   WifiOff,
+  X,
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
+import { useRouter } from 'next/navigation'
 import { useMemo, useState } from 'react'
-import { auditSeed, markerSeed, nasabahSeed, offlineSeed, profiles, setoranSeed } from '@/data/seed'
+import { auditSeed, markerSeed, nasabahSeed, offlineSeed, setoranSeed } from '@/data/seed'
 import { useForegroundLocationTracking } from '@/hooks/use-foreground-location-tracking'
 import {
   calculateDashboardSummary,
@@ -24,11 +29,20 @@ import {
   projectOfflineQueue,
   toCsv,
 } from '@/lib/domain'
-import { formatLastSeen, locationStatusLabel } from '@/lib/location'
-import { createDemoSukabumiMarker } from '@/lib/map'
-import type { AreaMarker, AreaStatus, AuditEvent, Nasabah, OfflineQueueItem, Setoran, UserRole } from '@/types'
+import { formatLastSeen, locationStatusLabel, parseCoordinatePair } from '@/lib/location'
+import { createTrackedSukabumiMarker } from '@/lib/map'
+import { MARKER_PHOTOS_BUCKET, uploadEvidenceFile } from '@/lib/storage'
+import { createLendMapBrowserClient } from '@/lib/supabase-browser'
+import type { AreaMarker, AreaStatus, AuditEvent, Nasabah, OfflineQueueItem, Profile, Setoran, SurveyorLocation, UserRole } from '@/types'
 
 type ViewKey = 'dashboard' | 'map' | 'nasabah' | 'setoran' | 'audit'
+type TrackerMarkerFormInput = {
+  location: SurveyorLocation
+  status: AreaStatus
+  notes: string
+  photoFile: File | null
+}
+type MarkerCoordinateMode = 'gps' | 'manual'
 
 const ownerViews: ViewKey[] = ['dashboard', 'map', 'nasabah', 'audit']
 const surveyorViews: ViewKey[] = ['map', 'nasabah', 'setoran']
@@ -57,19 +71,24 @@ const areaStatusClass: Record<AreaStatus, string> = {
   kurang_prospektif: 'bg-clay text-white',
 }
 
-export function LendMapApp() {
-  const [role, setRole] = useState<UserRole>('owner')
-  const [activeView, setActiveView] = useState<ViewKey>('dashboard')
+export function LendMapApp({ currentProfile }: { currentProfile: Profile }) {
+  const router = useRouter()
+  const role = currentProfile.role
+  const [activeView, setActiveView] = useState<ViewKey>(() => (role === 'owner' ? 'dashboard' : 'map'))
   const [nasabah] = useState<Nasabah[]>(nasabahSeed)
   const [markers, setMarkers] = useState<AreaMarker[]>(markerSeed)
   const [setoran, setSetoran] = useState<Setoran[]>(setoranSeed)
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(auditSeed)
   const [offlineQueue, setOfflineQueue] = useState<OfflineQueueItem[]>(offlineSeed)
-  const [selectedNasabahId, setSelectedNasabahId] = useState(nasabahSeed[0]?.id ?? '')
+  const [selectedNasabahId, setSelectedNasabahId] = useState(() => {
+    if (role === 'owner') return nasabahSeed[0]?.id ?? ''
+    return nasabahSeed.find((item) => item.surveyor_id === currentProfile.id)?.id ?? ''
+  })
   const [jumlahDibayar, setJumlahDibayar] = useState('220000')
   const [isOfflineMode, setIsOfflineMode] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
 
-  const currentUser = role === 'owner' ? profiles[0] : profiles[1]
+  const currentUser = currentProfile
   const trackingSurveyorId = role === 'owner' ? 'surveyor-1' : currentUser.id
   const locationTracking = useForegroundLocationTracking(trackingSurveyorId)
   const views = role === 'owner' ? ownerViews : surveyorViews
@@ -79,11 +98,6 @@ export function LendMapApp() {
   const visibleSetoran = role === 'owner' ? setoran : setoran.filter((item) => item.surveyor_id === currentUser.id)
   const summary = useMemo(() => calculateDashboardSummary(nasabah, setoran, getCurrentMonth(new Date('2026-06-13'))), [nasabah, setoran])
   const queueProjection = useMemo(() => projectOfflineQueue(offlineQueue), [offlineQueue])
-
-  function switchRole(nextRole: UserRole) {
-    setRole(nextRole)
-    setActiveView(nextRole === 'owner' ? 'dashboard' : 'map')
-  }
 
   function submitSetoran() {
     const customer = nasabah.find((item) => item.id === selectedNasabahId)
@@ -153,11 +167,25 @@ export function LendMapApp() {
     }, 400)
   }
 
-  function addTrackerMarker() {
-    const marker = createDemoSukabumiMarker({
+  async function addTrackerMarker(input: TrackerMarkerFormInput) {
+    const supabase = createLendMapBrowserClient()
+    const photoUrl = input.photoFile
+      ? await uploadEvidenceFile({
+          bucket: MARKER_PHOTOS_BUCKET,
+          file: input.photoFile,
+          supabase,
+          userId: currentProfile.id,
+        })
+      : null
+
+    const marker = createTrackedSukabumiMarker({
       existingCount: markers.length,
       surveyorId: role === 'owner' ? 'surveyor-1' : currentUser.id,
-      createdAt: new Date('2026-06-13T10:00:00.000Z').toISOString(),
+      location: input.location,
+      status: input.status,
+      notes: input.notes,
+      photoUrl,
+      createdAt: new Date().toISOString(),
     })
 
     if (isOfflineMode) {
@@ -208,6 +236,20 @@ export function LendMapApp() {
     URL.revokeObjectURL(link.href)
   }
 
+  async function logout() {
+    setAuthError(null)
+    const supabase = createLendMapBrowserClient()
+    const { error } = await supabase.auth.signOut()
+
+    if (error) {
+      setAuthError(error.message || 'Logout gagal. Coba lagi.')
+      return
+    }
+
+    router.replace('/login')
+    router.refresh()
+  }
+
   return (
     <main className="min-h-screen px-3 pb-28 pt-3 text-ink sm:px-6 sm:py-4 lg:px-8 lg:pb-4">
       <div className="mx-auto flex max-w-7xl flex-col gap-4">
@@ -216,8 +258,9 @@ export function LendMapApp() {
           userName={currentUser.full_name}
           queueTotal={queueProjection.total}
           isOfflineMode={isOfflineMode}
-          onRoleChange={switchRole}
           onOfflineToggle={() => setIsOfflineMode((value) => !value)}
+          onLogout={logout}
+          authError={authError}
         />
 
         <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
@@ -266,15 +309,17 @@ function Header({
   userName,
   queueTotal,
   isOfflineMode,
-  onRoleChange,
   onOfflineToggle,
+  onLogout,
+  authError,
 }: {
   role: UserRole
   userName: string
   queueTotal: number
   isOfflineMode: boolean
-  onRoleChange: (role: UserRole) => void
   onOfflineToggle: () => void
+  onLogout: () => void
+  authError: string | null
 }) {
   return (
     <header className="rounded-lg border border-ink/10 bg-[#fffaf0] p-3 shadow-line sm:p-4">
@@ -287,19 +332,8 @@ function Header({
           </p>
         </div>
         <div className="grid gap-2 sm:flex sm:items-center">
-          <div className="grid grid-cols-2 rounded-lg border border-ink/10 bg-white p-1 sm:flex">
-            <button
-              className={`rounded-md px-3 py-2 text-sm font-bold ${role === 'owner' ? 'bg-moss text-white' : 'text-ink/70'}`}
-              onClick={() => onRoleChange('owner')}
-            >
-              Owner
-            </button>
-            <button
-              className={`rounded-md px-3 py-2 text-sm font-bold ${role === 'surveyor' ? 'bg-moss text-white' : 'text-ink/70'}`}
-              onClick={() => onRoleChange('surveyor')}
-            >
-              Surveyor
-            </button>
+          <div className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-sm font-black capitalize text-moss">
+            {role}
           </div>
           <button
             className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold ${
@@ -314,8 +348,17 @@ function Header({
             <strong className="truncate">{userName}</strong>
             <span className="ml-2 shrink-0 text-ink/60">Queue: {queueTotal}</span>
           </div>
+          <button
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-ink/10 bg-white px-3 py-2 text-sm font-bold text-ink hover:bg-clay/10"
+            onClick={onLogout}
+            type="button"
+          >
+            <LogOut size={16} />
+            Logout
+          </button>
         </div>
       </div>
+      {authError ? <p className="mt-3 rounded-md border border-clay/30 bg-clay/10 px-3 py-2 text-sm font-semibold text-clay">{authError}</p> : null}
     </header>
   )
 }
@@ -459,9 +502,91 @@ function MapWorkspace({
 }: {
   markers: AreaMarker[]
   role: UserRole
-  onAddMarker: () => void
+  onAddMarker: (input: TrackerMarkerFormInput) => Promise<void>
   locationTracking: ReturnType<typeof useForegroundLocationTracking>
 }) {
+  const [capturedMarkerLocation, setCapturedMarkerLocation] = useState<SurveyorLocation | null>(null)
+  const [focusLocationRequest, setFocusLocationRequest] = useState(0)
+  const [isMarkerFormOpen, setIsMarkerFormOpen] = useState(false)
+  const [markerCoordinateInput, setMarkerCoordinateInput] = useState('')
+  const [markerCoordinateMode, setMarkerCoordinateMode] = useState<MarkerCoordinateMode>('gps')
+  const [markerFormError, setMarkerFormError] = useState<string | null>(null)
+  const [markerNotes, setMarkerNotes] = useState('')
+  const [markerPhotoFile, setMarkerPhotoFile] = useState<File | null>(null)
+  const [markerPhotoName, setMarkerPhotoName] = useState<string | null>(null)
+  const [isMarkerSubmitting, setIsMarkerSubmitting] = useState(false)
+  const [markerStatus, setMarkerStatus] = useState<AreaStatus>('potensial')
+
+  function locateDevice() {
+    locationTracking.refreshLocation()
+    setFocusLocationRequest((value) => value + 1)
+  }
+
+  function openMarkerForm() {
+    setCapturedMarkerLocation(locationTracking.location)
+    setMarkerCoordinateInput('')
+    setMarkerCoordinateMode(locationTracking.location ? 'gps' : 'manual')
+    setMarkerFormError(null)
+    setMarkerNotes('')
+    setMarkerPhotoFile(null)
+    setMarkerPhotoName(null)
+    setMarkerStatus('potensial')
+    setIsMarkerFormOpen(true)
+  }
+
+  async function submitMarkerForm() {
+    const manualCoordinates = markerCoordinateMode === 'manual' ? parseCoordinatePair(markerCoordinateInput) : null
+    const markerLocation =
+      markerCoordinateMode === 'manual' && manualCoordinates
+        ? {
+            surveyor_id: capturedMarkerLocation?.surveyor_id ?? 'surveyor-1',
+            latitude: manualCoordinates.latitude,
+            longitude: manualCoordinates.longitude,
+            accuracy_meters: null,
+            heading: null,
+            speed_mps: null,
+            captured_at: new Date().toISOString(),
+          }
+        : capturedMarkerLocation
+
+    if (!markerLocation) {
+      setMarkerFormError('Lokasi belum tersedia. Pakai GPS aktif atau isi koordinat manual dari Google Maps.')
+      return
+    }
+
+    if (markerCoordinateMode === 'manual' && !manualCoordinates) {
+      setMarkerFormError('Format koordinat harus seperti -6.9277, 106.9296.')
+      return
+    }
+
+    if (markerNotes.trim().length === 0) {
+      setMarkerFormError('Penjelasan lokasi wajib diisi supaya marker bisa diaudit.')
+      return
+    }
+
+    setIsMarkerSubmitting(true)
+    try {
+      await onAddMarker({
+        location: markerLocation,
+        status: markerStatus,
+        notes: markerNotes,
+        photoFile: markerPhotoFile,
+      })
+      setIsMarkerFormOpen(false)
+      setCapturedMarkerLocation(null)
+      setMarkerCoordinateInput('')
+      setMarkerCoordinateMode('gps')
+      setMarkerNotes('')
+      setMarkerPhotoFile(null)
+      setMarkerPhotoName(null)
+      setMarkerFormError(null)
+    } catch (error) {
+      setMarkerFormError(error instanceof Error ? error.message : 'Upload gambar atau simpan marker gagal.')
+    } finally {
+      setIsMarkerSubmitting(false)
+    }
+  }
+
   return (
     <div className="space-y-5">
       <SectionTitle
@@ -470,28 +595,42 @@ function MapWorkspace({
         subtitle={role === 'owner' ? 'OpenStreetMap untuk semua marker area Sukabumi' : 'OpenStreetMap untuk marker Sukabumi milik surveyor aktif'}
       />
       <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
-        <SukabumiLeafletMap markers={markers} surveyorLocation={locationTracking.location} />
+        <div className="relative">
+          <SukabumiLeafletMap
+            focusLocationRequest={focusLocationRequest}
+            markers={markers}
+            surveyorLocation={locationTracking.location}
+          />
+          <button
+            aria-label="Deteksi lokasi perangkat"
+            className="absolute bottom-4 right-4 z-[500] inline-flex h-12 w-12 items-center justify-center rounded-full border border-ink/10 bg-white text-river shadow-line"
+            data-testid="locate-device-button"
+            onClick={locateDevice}
+            type="button"
+          >
+            <LocateFixed size={22} />
+          </button>
+        </div>
         <div className="space-y-3">
           <div className="rounded-lg border border-ink/10 bg-white p-4">
-            <p className="text-xs font-black uppercase tracking-[0.16em] text-ink/45">Live location</p>
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-ink/45">Lokasi perangkat</p>
             <p className="mt-2 text-lg font-black">{locationStatusLabel(locationTracking.status)}</p>
             {locationTracking.location ? (
               <div className="mt-2 space-y-1 text-sm text-ink/65">
-                <p>Last seen: {formatLastSeen(locationTracking.location.captured_at)}</p>
+                <p>Diambil: {formatLastSeen(locationTracking.location.captured_at)}</p>
                 <p>Akurasi: {locationTracking.location.accuracy_meters?.toFixed(0) ?? '-'} m</p>
               </div>
             ) : (
-              <p className="mt-2 text-sm text-ink/60">Tracking hanya aktif saat app terbuka dan permission lokasi diizinkan.</p>
+              <p className="mt-2 text-sm text-ink/60">Ambil titik GPS sekali saat dibutuhkan. Tidak ada tracking berjalan terus-menerus.</p>
             )}
             {locationTracking.errorMessage ? <p className="mt-2 text-sm font-bold text-clay">{locationTracking.errorMessage}</p> : null}
             <button
-              className={`mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-lg px-4 py-3 text-sm font-black text-white ${
-                locationTracking.isTracking ? 'bg-clay' : 'bg-river'
-              }`}
-              onClick={locationTracking.isTracking ? locationTracking.stopTracking : locationTracking.startTracking}
+              className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-river px-4 py-3 text-sm font-black text-white"
+              onClick={locationTracking.refreshLocation}
               data-testid="location-tracking-toggle"
+              type="button"
             >
-              {locationTracking.isTracking ? 'Stop tracking' : 'Mulai tracking lokasi'}
+              {locationTracking.isTracking ? 'Mengambil lokasi...' : locationTracking.location ? 'Ambil ulang lokasi saat ini' : 'Ambil lokasi saat ini'}
             </button>
           </div>
           <div className="rounded-lg border border-ink/10 bg-white p-4">
@@ -499,6 +638,111 @@ function MapWorkspace({
             <p className="mt-2 text-2xl font-black" data-testid="tracker-marker-count">{markers.length}</p>
             <p className="mt-1 text-sm text-ink/60">Marker terlihat di peta Sukabumi</p>
           </div>
+          {isMarkerFormOpen ? (
+            <div className="rounded-lg border border-river/30 bg-white p-4" data-testid="marker-form">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.16em] text-ink/45">Marker lokasi saat ini</p>
+                  <p className="mt-2 text-sm font-bold text-ink/70">
+                    {markerCoordinateMode === 'manual'
+                      ? markerCoordinateInput || 'Isi koordinat manual'
+                      : capturedMarkerLocation
+                        ? `${capturedMarkerLocation.latitude.toFixed(6)}, ${capturedMarkerLocation.longitude.toFixed(6)}`
+                        : 'Menunggu GPS aktif'}
+                  </p>
+                </div>
+                <button
+                  aria-label="Tutup form marker"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-field text-ink"
+                  onClick={() => setIsMarkerFormOpen(false)}
+                  type="button"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2 rounded-lg border border-ink/10 bg-field p-1">
+                <button
+                  className={`min-h-11 rounded-md px-3 py-2 text-sm font-black ${markerCoordinateMode === 'gps' ? 'bg-river text-white' : 'bg-white text-ink/70'}`}
+                  onClick={() => {
+                    setMarkerCoordinateMode('gps')
+                    setMarkerFormError(null)
+                  }}
+                  type="button"
+                >
+                  Pakai GPS
+                </button>
+                <button
+                  className={`min-h-11 rounded-md px-3 py-2 text-sm font-black ${markerCoordinateMode === 'manual' ? 'bg-river text-white' : 'bg-white text-ink/70'}`}
+                  onClick={() => {
+                    setMarkerCoordinateMode('manual')
+                    setMarkerFormError(null)
+                  }}
+                  type="button"
+                >
+                  Input koordinat
+                </button>
+              </div>
+              {markerCoordinateMode === 'manual' ? (
+                <>
+                  <label className="mt-4 block text-xs font-black uppercase text-ink/50" htmlFor="marker-coordinate">Koordinat Google Maps</label>
+                  <input
+                    className="mt-2 min-h-12 w-full rounded-lg border border-ink/15 bg-white px-3 py-3"
+                    id="marker-coordinate"
+                    inputMode="decimal"
+                    onChange={(event) => setMarkerCoordinateInput(event.target.value)}
+                    placeholder="-6.9277, 106.9296"
+                    value={markerCoordinateInput}
+                  />
+                </>
+              ) : null}
+              <label className="mt-4 block text-xs font-black uppercase text-ink/50" htmlFor="marker-status">Status area</label>
+              <select
+                className="mt-2 min-h-12 w-full rounded-lg border border-ink/15 bg-white px-3 py-3"
+                id="marker-status"
+                onChange={(event) => setMarkerStatus(event.target.value as AreaStatus)}
+                value={markerStatus}
+              >
+                <option value="potensial">Potensial</option>
+                <option value="bagus">Bagus</option>
+                <option value="kurang_prospektif">Kurang prospektif</option>
+              </select>
+              <label className="mt-4 block text-xs font-black uppercase text-ink/50" htmlFor="marker-notes">Penjelasan lokasi</label>
+              <textarea
+                className="mt-2 min-h-24 w-full resize-none rounded-lg border border-ink/15 bg-white px-3 py-3"
+                id="marker-notes"
+                onChange={(event) => setMarkerNotes(event.target.value)}
+                placeholder="Contoh: warung padat transaksi, dekat pasar, banyak usaha harian."
+                value={markerNotes}
+              />
+              <label className="mt-4 block text-xs font-black uppercase text-ink/50" htmlFor="marker-photo">Foto bukti optional</label>
+              <label className="mt-2 flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-ink/20 bg-field px-3 py-3 text-sm font-bold text-ink/70" htmlFor="marker-photo">
+                <Camera size={18} />
+                {markerPhotoName ?? 'Pilih / ambil foto'}
+              </label>
+              <input
+                accept="image/*"
+                capture="environment"
+                className="sr-only"
+                id="marker-photo"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null
+                  setMarkerPhotoFile(file)
+                  setMarkerPhotoName(file?.name ?? null)
+                }}
+                type="file"
+              />
+              {markerFormError ? <p className="mt-3 text-sm font-bold text-clay">{markerFormError}</p> : null}
+              <button
+                className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-moss px-4 py-3 text-sm font-black text-white"
+                data-testid="marker-form-submit"
+                disabled={isMarkerSubmitting}
+                onClick={submitMarkerForm}
+                type="button"
+              >
+                {isMarkerSubmitting ? 'Mengupload...' : 'Simpan marker lokasi ini'}
+              </button>
+            </div>
+          ) : null}
           {markers.map((marker) => (
             <div key={marker.id} className="rounded-lg border border-ink/10 bg-white p-4" data-testid="tracker-marker-card">
               <span className={`rounded-full px-2 py-1 text-xs font-black ${areaStatusClass[marker.status]}`}>
@@ -510,12 +754,13 @@ function MapWorkspace({
           ))}
           <button
             className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-moss px-4 py-3 text-sm font-black text-white"
-            onClick={onAddMarker}
+            onClick={openMarkerForm}
             data-testid="tracker-add-marker"
           >
             <Plus size={18} />
-            Tambah marker Sukabumi
+            Tambah marker di lokasi saya
           </button>
+          {!isMarkerFormOpen && markerFormError ? <p className="text-sm font-bold text-clay">{markerFormError}</p> : null}
         </div>
       </div>
     </div>

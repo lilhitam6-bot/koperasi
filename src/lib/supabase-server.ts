@@ -13,7 +13,11 @@ export async function createLendMapServerClient() {
       },
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value, options }) => {
-          cookieStore.set(name, value, options)
+          try {
+            cookieStore.set(name, value, options)
+          } catch {
+            return
+          }
         })
       },
     },

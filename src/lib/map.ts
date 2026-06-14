@@ -1,4 +1,4 @@
-import type { AreaMarker, AreaStatus } from '@/types'
+import type { AreaMarker, AreaStatus, SurveyorLocation } from '@/types'
 
 export type LatLngTuple = [number, number]
 export type LatLngBounds = [LatLngTuple, LatLngTuple]
@@ -38,26 +38,35 @@ export function markerPopupLabel(marker: Pick<AreaMarker, 'status' | 'notes'>): 
   return `${AREA_STATUS_LABELS[marker.status]} - ${marker.notes ?? 'Belum ada catatan'}`
 }
 
-export function createDemoSukabumiMarker({
+export function createTrackedSukabumiMarker({
   existingCount,
   surveyorId,
+  location,
+  status,
+  notes,
+  photoUrl,
   createdAt,
 }: {
   existingCount: number
   surveyorId: string
+  location: SurveyorLocation
+  status: AreaStatus
+  notes: string
+  photoUrl?: string | null
   createdAt: string
 }): AreaMarker {
   const nextNumber = existingCount + 1
-  const offset = (nextNumber % 5) * 0.004
+  const cleanNotes = notes.trim()
+  const cleanPhotoUrl = photoUrl?.trim()
 
   return {
     id: `marker-${nextNumber}`,
     surveyor_id: surveyorId,
-    latitude: Number((SUKABUMI_MAP.center[0] - 0.006 + offset).toFixed(5)),
-    longitude: Number((SUKABUMI_MAP.center[1] + 0.006 + offset).toFixed(5)),
-    status: 'potensial',
-    notes: `Marker tracking baru di Sukabumi #${nextNumber}`,
-    photo_url: null,
+    latitude: location.latitude,
+    longitude: location.longitude,
+    status,
+    notes: cleanNotes.length > 0 ? cleanNotes : null,
+    photo_url: cleanPhotoUrl || null,
     created_at: createdAt,
     updated_at: createdAt,
   }
