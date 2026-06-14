@@ -8,7 +8,8 @@
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check:tracker": "node scripts/check-tracker.mjs"
+    "check:tracker": "node scripts/check-tracker.mjs",
+    "docs:flows": "node scripts/generate-flow-docs.mjs docs/flow-audit/flow-doc-config.json"
   },
   "overrides": {
     "postcss": "8.5.15"

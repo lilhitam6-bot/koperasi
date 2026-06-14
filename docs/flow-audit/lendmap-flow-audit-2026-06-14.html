@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LendMap Flow Audit</title>
+  <style>
+    :root {
+      --ink: #19231f;
+      --muted: #5d6b63;
+      --line: #d8dfd9;
+      --paper: #fbfcf8;
+      --panel: #ffffff;
+      --moss: #486c55;
+      --clay: #9b5642;
+      --gold: #b9862e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.58;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 28px 64px;
+    }
+    h1 {
+      margin: 0 0 14px;
+      color: var(--ink);
+      font-size: 34px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 34px 0 12px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      color: var(--moss);
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 24px 0 10px;
+      color: var(--ink);
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    h4 {
+      margin: 18px 0 8px;
+      color: var(--clay);
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+    p, ul { margin: 0 0 12px; }
+    ul { padding-left: 22px; }
+    li { margin: 4px 0; }
+    strong { font-weight: 800; }
+    code {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #f3f5ef;
+      padding: 1px 5px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+    }
+    .code {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #101915;
+      color: #edf5ef;
+      padding: 16px;
+      font-size: 12px;
+    }
+    .mermaid {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: visible;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 18px;
+      margin: 14px 0 18px;
+      break-inside: avoid;
+    }
+    .mermaid svg {
+      max-width: 100% !important;
+      max-height: 650px;
+      height: auto !important;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 18px;
+      background: var(--panel);
+      font-size: 12px;
+      break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #eef3eb;
+      color: var(--ink);
+      font-weight: 800;
+    }
+    @page { size: A4; }
+    @media print {
+      body { background: white; }
+      main { max-width: none; padding: 0; }
+      h2 { break-after: avoid; }
+      .mermaid, table, pre { break-inside: avoid; }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <main><h1>LendMap Flow Audit</h1>
+<p>Tanggal audit: 2026-06-14 Basis evaluasi: kode aplikasi, migrasi Supabase, dokumentasi formal, dan review paralel PM, Frontend, Backend, QA/DevOps.</p>
+<h2>Ringkasan Eksekutif</h2>
+<p>Implementasi LendMap sudah lebih maju daripada dokumentasi formalnya. Flow inti untuk login, isolasi akun owner/surveyor, nasabah draft-review-hiatus, dan upload gambar marker sudah ada di aplikasi dan migrasi Supabase. Namun dokumentasi PRD, arsitektur, security, QA, dan runbook belum sepenuhnya mengejar perubahan UI/backend terbaru.</p>
+<p>Status keseluruhan dokumentasi formal: <strong>partial, perlu hardening sebelum produksi</strong>.</p>
+<p>Prioritas penutupan gap:</p>
+<ul><li>Tambahkan acceptance criteria per flow bisnis.</li><li>Formalisasi lifecycle nasabah: draft, approved, rejected, hiatus.</li><li>Tambahkan RLS/storage matrix per tabel dan bucket.</li><li>Tambahkan QA account matrix dan release smoke checklist.</li><li>Tambahkan runbook Vercel, Supabase migration, backup, restore, dan rollback.</li></ul>
+<h2>Sistem dan Aktor</h2>
+<ul><li><strong>Owner/Bos</strong>: akun prioritas. Masuk ke dashboard, peta, nasabah, dan audit. Bisa membuat nasabah langsung approved, approve/reject draft surveyor, dan memindahkan nasabah approved ke hiatus.</li><li><strong>Surveyor</strong>: masuk ke peta, nasabah, dan setoran. Bisa membuat marker dan draft nasabah. Tidak bisa approve nasabah dan tidak melihat data hiatus.</li><li><strong>Supabase Auth</strong>: sumber session.</li><li><strong>Supabase Database</strong>: profiles, nasabah, area_markers, area_status_history, setoran, surveyor_locations, audit_log, push_subscriptions.</li><li><strong>Supabase Storage</strong>: bucket marker-photos dan setoran-photos.</li><li><strong>Vercel/Next.js</strong>: deployment dan runtime aplikasi.</li></ul>
+<h2>Flow 1: Auth dan Role Routing</h2>
+<p>Status implementasi: <strong>partial-complete</strong>. Login, active profile gate, dan unauthorized route sudah ada. Dokumentasi belum cukup menjelaskan safe next path, inactive profile, dan first screen per role.</p>
+<pre class="mermaid">flowchart TD
+  Start([User buka app]) --&gt; HasSession{Ada Supabase session?}
+  HasSession -- Tidak --&gt; Login[/GET /login/]
+  Login --&gt; Submit[Email + password]
+  Submit --&gt; Auth[Supabase Auth signInWithPassword]
+  Auth --&gt; AuthOk{Auth sukses?}
+  AuthOk -- Tidak --&gt; LoginError[Pesan login gagal]
+  LoginError --&gt; Submit
+  AuthOk -- Ya --&gt; NextPath[router.replace nextPath aman]
+  HasSession -- Ya --&gt; LoadProfile[Query profiles by user.id]
+  NextPath --&gt; LoadProfile
+  LoadProfile --&gt; Active{profile.is_active?}
+  Active -- Tidak / missing --&gt; Unauthorized[/GET /unauthorized/]
+  Active -- Ya --&gt; Role{profile.role}
+  Role -- owner --&gt; OwnerHome[Owner shell: dashboard default]
+  Role -- surveyor --&gt; SurveyorHome[Surveyor shell: map default]</pre>
+<p>Catatan:</p>
+<ul><li>Safe next path menerima path lokal yang diawali <code>/</code> dan menolak URL eksternal atau <code>//</code>.</li><li>Inactive/missing profile diarahkan ke <code>/unauthorized</code>.</li><li>Owner dan surveyor memakai shell yang sama, tetapi nav dan data difilter menurut role.</li></ul>
+<p>Acceptance criteria yang belum formal:</p>
+<ul><li>Login sukses owner membuka dashboard.</li><li>Login sukses surveyor membuka peta.</li><li>Password salah menampilkan error tanpa redirect.</li><li>User inactive tidak bisa masuk ke app.</li><li>Logout menghapus session dan kembali ke login.</li></ul>
+<h2>Flow 2: Isolasi Tampilan Owner vs Surveyor</h2>
+<p>Status implementasi: <strong>partial-complete</strong>. Isolasi UI dan filter data ada di code. Dokumentasi belum memetakan hak akses per screen.</p>
+<pre class="mermaid">flowchart LR
+  Profile[Active profile] --&gt; Owner{role owner?}
+  Owner -- Ya --&gt; OwnerNav[dashboard, map, nasabah, audit]
+  Owner -- Tidak --&gt; SurveyorNav[map, nasabah, setoran]
+  OwnerNav --&gt; OwnerData[Semua nasabah, termasuk draft/rejected/hiatus]
+  OwnerNav --&gt; OwnerActions[approve, reject, hiatus, input approved]
+  SurveyorNav --&gt; SurveyorData[Nasabah milik sendiri, non-hiatus]
+  SurveyorNav --&gt; SurveyorActions[input draft, input marker, input setoran approved aktif]</pre>
+<p>Rules utama:</p>
+<ul><li>Owner melihat semua lifecycle nasabah.</li><li>Surveyor melihat nasabah non-hiatus yang dibuat/ditugaskan kepadanya.</li><li>Setoran hanya memakai nasabah approved + aktif.</li><li>Draft surveyor tidak otomatis menjadi nasabah aktif.</li></ul>
+<p>Gap dokumen:</p>
+<ul><li>Belum ada access matrix UI per role.</li><li>Belum ada daftar negative cases, misalnya surveyor mencoba approve draft atau melihat hiatus.</li></ul>
+<h2>Flow 3: Lifecycle Nasabah</h2>
+<p>Status implementasi: <strong>strong di aplikasi dan migrasi, lemah di dokumentasi formal</strong>.</p>
+<pre class="mermaid">stateDiagram-v2
+  [*] --&gt; Draft: surveyor create
+  [*] --&gt; ApprovedAktif: owner create
+  Draft --&gt; ApprovedAktif: owner approve
+  Draft --&gt; Rejected: owner reject
+  Rejected --&gt; Draft: surveyor revise, perlu aturan lanjutan
+  ApprovedAktif --&gt; Hiatus: owner set hiatus
+  ApprovedAktif --&gt; Lunas: future/ops status
+  ApprovedAktif --&gt; Macet: future/ops status
+  Hiatus --&gt; [*]: tersimpan sebagai arsip owner</pre>
+<p>Data flow:</p>
+<pre class="mermaid">sequenceDiagram
+  actor Surveyor
+  actor Owner
+  participant App as Next.js UI
+  participant DB as Supabase nasabah
+  participant RLS as RLS policies
+
+  Surveyor-&gt;&gt;App: Input data nasabah
+  App-&gt;&gt;DB: insert review_status=draft, status=aktif
+  DB-&gt;&gt;RLS: validate surveyor only inserts own draft
+  RLS--&gt;&gt;DB: allow
+  DB--&gt;&gt;App: Draft tersimpan
+  Owner-&gt;&gt;App: Buka tab nasabah draft
+  App-&gt;&gt;DB: select all nasabah
+  Owner-&gt;&gt;App: Approve atau reject
+  App-&gt;&gt;DB: update review_status, reviewed_by, reviewed_at, notes
+  DB--&gt;&gt;App: Data sinkron
+  Owner-&gt;&gt;App: Set hiatus untuk approved aktif
+  App-&gt;&gt;DB: update status=hiatus</pre>
+<p>Business rules yang perlu dikunci:</p>
+<ul><li>Owner input langsung <code>approved</code>.</li><li>Surveyor input selalu <code>draft</code>.</li><li>Hanya owner yang boleh approve/reject.</li><li>Hanya owner yang boleh mengubah nasabah approved ke <code>hiatus</code>.</li><li><code>hiatus</code> tetap tersimpan untuk record owner, tidak muncul di flow karyawan/surveyor.</li><li>Setoran tidak boleh dibuat untuk draft, rejected, hiatus, lunas, atau macet.</li></ul>
+<p>Gap dokumen:</p>
+<ul><li>PRD belum punya lifecycle nasabah sebagai aturan produk.</li><li>Acceptance criteria approve/reject/hiatus belum ada.</li><li>Belum ada aturan revisi data setelah rejected.</li><li>Belum ada aturan audit trail produk untuk review nasabah.</li></ul>
+<h2>Flow 4: Marker Area dan Upload Gambar</h2>
+<p>Status implementasi: <strong>partial</strong>. UI mendukung GPS/manual coordinate dan upload gambar marker ke Supabase Storage. Persistensi marker ke database masih perlu diverifikasi sebagai next integration karena flow saat ini masih local state di komponen.</p>
+<pre class="mermaid">flowchart TD
+  OpenMap[Surveyor/Owner buka peta] --&gt; ChooseMode{Input lokasi}
+  ChooseMode -- GPS --&gt; BrowserGeo[Browser geolocation]
+  BrowserGeo --&gt; GeoOk{Permission dan akurasi OK?}
+  GeoOk -- Tidak --&gt; GeoError[Error state: permission/unavailable]
+  GeoOk -- Ya --&gt; MarkerForm[Form marker]
+  ChooseMode -- Manual --&gt; MarkerForm
+  MarkerForm --&gt; HasPhoto{Ada gambar?}
+  HasPhoto -- Ya --&gt; Upload[Upload file ke marker-photos]
+  Upload --&gt; StoragePath[Path: userId/timestamp-slug.ext]
+  HasPhoto -- Tidak --&gt; BuildMarker[Build marker payload]
+  StoragePath --&gt; BuildMarker
+  BuildMarker --&gt; LocalState[Marker muncul di peta via local state]
+  LocalState --&gt; FutureDB[Next: persist ke area_markers + history trigger]</pre>
+<p>Storage notes:</p>
+<ul><li>Bucket marker: <code>marker-photos</code>.</li><li>Path aktual: <code>{userId}/{timestamp}-{slug}.{ext}</code>.</li><li>Helper upload belum enforce ukuran dan MIME type di client.</li><li>Dokumentasi security lama perlu disesuaikan dengan path aktual dan policy bucket.</li></ul>
+<p>Gap dokumen:</p>
+<ul><li>Belum ada matrix error state GPS/manual/upload.</li><li>Belum ada ketentuan ukuran file, MIME type, dan kompresi gambar.</li><li>Belum ada flow eksplisit dari marker local state ke <code>area_markers</code>.</li></ul>
+<h2>Flow 5: Setoran</h2>
+<p>Status implementasi: <strong>partial/simulated</strong>. UI setoran ada dan menggunakan nasabah approved+aktif, tetapi persistensi penuh dan upload bukti setoran belum selesai sebagai data flow produksi.</p>
+<pre class="mermaid">flowchart TD
+  SurveyorSetoran[Surveyor buka setoran] --&gt; LoadPayable[Load visible nasabah approved + aktif]
+  LoadPayable --&gt; AnyNasabah{Ada nasabah payable?}
+  AnyNasabah -- Tidak --&gt; Empty[Empty state perlu didefinisikan]
+  AnyNasabah -- Ya --&gt; Form[Input nominal + catatan + bukti]
+  Form --&gt; Online{Online?}
+  Online -- Ya --&gt; CurrentLocal[Current: simpan ke local state]
+  Online -- Tidak --&gt; OfflinePreview[Current: status pending/offline preview]
+  CurrentLocal --&gt; FutureDB[Next: insert setoran + upload setoran-photos]
+  OfflinePreview --&gt; FutureSync[Next: offline queue + sync]</pre>
+<p>Business rules:</p>
+<ul><li>Surveyor hanya boleh input setoran untuk nasabah yang approved dan aktif.</li><li>Draft/rejected/hiatus tidak boleh muncul dalam opsi setoran.</li><li>Bukti foto setoran sudah disiapkan bucket-nya, tetapi integrasi UI/storage masih future work.</li></ul>
+<p>Gap dokumen:</p>
+<ul><li>Belum ada kontrak offline queue.</li><li>Belum ada aturan partial payment.</li><li>Belum ada upload bukti setoran end-to-end.</li><li>Belum ada rekonsiliasi konflik saat sync gagal.</li></ul>
+<h2>Flow 6: Backend Supabase dan RLS</h2>
+<p>Status implementasi: <strong>kuat di migrasi, dokumen arsitektur/security perlu update</strong>.</p>
+<pre class="mermaid">flowchart TB
+  AuthUser[auth.users] --&gt; Trigger[handle_new_user trigger]
+  Trigger --&gt; Profiles[profiles]
+  Profiles --&gt; ActiveGate[Next.js active profile gate]
+  ActiveGate --&gt; UI[Role-based UI]
+
+  UI --&gt; Nasabah[nasabah]
+  UI --&gt; Markers[area_markers]
+  UI --&gt; Setoran[setoran]
+  UI --&gt; Locations[surveyor_locations]
+  UI --&gt; Storage[(Storage buckets)]
+
+  Nasabah --&gt; Audit[audit_log trigger]
+  Markers --&gt; History[area_status_history trigger-owned]
+  Setoran --&gt; Score[score/payment summary future]
+
+  RLS[RLS Policies] --&gt; Profiles
+  RLS --&gt; Nasabah
+  RLS --&gt; Markers
+  RLS --&gt; Setoran
+  RLS --&gt; Locations
+  RLS --&gt; Storage</pre>
+<p>Access matrix ringkas:</p>
+<table><thead><tr><th>Resource</th><th>Owner/Bos</th><th>Surveyor</th><th>Notes</th></tr></thead><tbody><tr><td>profiles</td><td>read active users, owner-managed ops</td><td>read own/profile-limited</td><td>bootstrap dari auth trigger perlu dokumen jelas</td></tr><tr><td>nasabah</td><td>read all, create approved, review, hiatus</td><td>create own draft, read own non-hiatus</td><td>core lifecycle terbaru</td></tr><tr><td>area_markers</td><td>read/manage according policy</td><td>create/update assigned/own markers</td><td>UI marker DB persistence belum final</td></tr><tr><td>area_status_history</td><td>read/audit</td><td>read limited</td><td>trigger-owned, bukan client write</td></tr><tr><td>setoran</td><td>read/report</td><td>insert only approved aktif</td><td>current UI masih simulated/local</td></tr><tr><td>surveyor_locations</td><td>owner monitoring</td><td>surveyor upsert own location</td><td>realtime channel perlu UI owner</td></tr><tr><td>audit_log</td><td>owner/audit</td><td>restricted</td><td>perlu dashboard audit final</td></tr><tr><td>marker-photos</td><td>upload own path</td><td>upload own path</td><td>path aktual userId/timestamp-slug.ext</td></tr><tr><td>setoran-photos</td><td>future upload</td><td>future upload</td><td>integrasi belum selesai</td></tr></tbody></table>
+<p>Backend documentation gaps:</p>
+<ul><li>Arsitektur belum menjelaskan <code>surveyor_locations</code>, <code>push_subscriptions</code>, workflow nasabah review, dan <code>area_status_history</code> sebagai trigger-owned.</li><li>Auth/profile bootstrap belum menjelaskan sumber role dari metadata, fallback full_name, default role, inactive profile, dan promosi owner.</li><li>Security docs belum sinkron dengan storage path aktual.</li><li>Test migrasi saat ini masih substring-level, belum integration-level RLS/trigger/storage tests.</li></ul>
+<h2>Flow 7: Deploy, Env, dan Release Gate</h2>
+<p>Status implementasi: <strong>partial</strong>. Env lokal dan Vercel sudah diarahkan oleh user, tetapi runbook formal masih kurang.</p>
+<pre class="mermaid">flowchart TD
+  Dev[Local development] --&gt; Env[.env.local]
+  Env --&gt; Supabase[Supabase project seelloevkfehricvxxmt]
+  Supabase --&gt; Migrations[supabase db push]
+  Dev --&gt; Git[Commit + push GitHub]
+  Git --&gt; Vercel[Vercel deploy]
+  Vercel --&gt; VercelEnv[Preview/Production env vars]
+  VercelEnv --&gt; Smoke[Post-deploy smoke test]
+  Smoke --&gt; GoNoGo{Go/No-Go}
+  GoNoGo -- Go --&gt; Release[Release usable]
+  GoNoGo -- No-Go --&gt; Rollback[Rollback deploy or repair migration]</pre>
+<p>Required env matrix:</p>
+<table><thead><tr><th>Variable</th><th>Local</th><th>Vercel Preview</th><th>Vercel Production</th><th>Notes</th></tr></thead><tbody><tr><td>NEXT_PUBLIC_SUPABASE_URL</td><td>required</td><td>required</td><td>required</td><td>Project API URL</td></tr><tr><td>NEXT_PUBLIC_SUPABASE_ANON_KEY</td><td>required</td><td>required</td><td>required</td><td>Public anon key</td></tr><tr><td>SUPABASE_SERVICE_ROLE_KEY</td><td>local admin scripts only</td><td>avoid unless needed</td><td>avoid unless needed</td><td>Secret, never expose client</td></tr><tr><td>SUPABASE_ACCESS_TOKEN</td><td>CLI only</td><td>optional CI</td><td>optional CI</td><td>For scripted db operations</td></tr><tr><td>SUPABASE_PROJECT_REF</td><td>seelloevkfehricvxxmt</td><td>seelloevkfehricvxxmt</td><td>seelloevkfehricvxxmt</td><td>CLI/project targeting</td></tr></tbody></table>
+<p>Release gate yang perlu jadi dokumen formal:</p>
+<ul><li><code>npm run lint</code></li><li><code>npm run typecheck</code></li><li><code>npm run test</code></li><li><code>npm run build</code></li><li>Supabase migration status checked.</li><li>Login owner and surveyor checked.</li><li>RLS negative test checked.</li><li>Marker photo upload checked.</li><li>Nasabah draft/approve/reject/hiatus checked.</li><li>Setoran approved+aktif gating checked.</li><li>Backup/restore/rollback plan reviewed before production data.</li></ul>
+<h2>User Flow Owner</h2>
+<pre class="mermaid">journey
+  title Owner daily flow
+  section Start
+    Login sebagai bos: 5: Owner
+    Lihat dashboard: 4: Owner
+  section Review data
+    Buka tab nasabah: 5: Owner
+    Lihat draft surveyor: 5: Owner
+    Approve atau reject: 5: Owner
+  section Operasi
+    Tambah nasabah langsung approved: 4: Owner
+    Cek peta dan marker: 4: Owner
+    Pindahkan nasabah ke hiatus: 4: Owner
+  section Audit
+    Review data record: 3: Owner
+    Export/report future: 2: Owner</pre>
+<p>Owner acceptance criteria:</p>
+<ul><li>Owner tidak bergantung pada verifikasi surveyor untuk input nasabah.</li><li>Draft surveyor masuk ke daftar review owner.</li><li>Owner bisa reject dengan catatan.</li><li>Hiatus mengarsipkan nasabah tanpa menghapus record.</li><li>Owner tetap bisa melihat record hiatus.</li></ul>
+<h2>User Flow Surveyor</h2>
+<pre class="mermaid">journey
+  title Surveyor daily flow
+  section Start
+    Login sebagai surveyor: 5: Surveyor
+    Masuk ke peta: 4: Surveyor
+  section Lapangan
+    Capture lokasi GPS atau manual: 4: Surveyor
+    Upload foto marker: 4: Surveyor
+    Input draft nasabah: 5: Surveyor
+  section Pembayaran
+    Pilih nasabah approved aktif: 4: Surveyor
+    Input setoran: 3: Surveyor
+    Lihat pending/offline state: 3: Surveyor
+  section Batasan
+    Tidak bisa approve/reject: 5: Surveyor
+    Tidak melihat hiatus: 5: Surveyor</pre>
+<p>Surveyor acceptance criteria:</p>
+<ul><li>Surveyor tidak punya tab dashboard/audit.</li><li>Surveyor create nasabah selalu draft.</li><li>Surveyor tidak bisa membuat setoran untuk draft.</li><li>Surveyor tidak melihat nasabah hiatus.</li><li>Surveyor upload marker photo ke path milik user sendiri.</li></ul>
+<h2>Dokumentasi Formal: Completeness Audit</h2>
+<table><thead><tr><th>Area</th><th>Status</th><th>Evidence</th><th>Gap utama</th></tr></thead><tbody><tr><td>PRD</td><td>Partial</td><td>Problem, roles, feature inventory ada</td><td>Acceptance criteria dan user journey kurang</td></tr><tr><td>Sprint plan</td><td>Partial</td><td>Phase dan gates ada</td><td>Belum UAT detail dan release signoff</td></tr><tr><td>Roadmap</td><td>Partial</td><td>Prioritas dan risk ada</td><td>Belum menutup business rules terbaru</td></tr><tr><td>Architecture</td><td>Partial/Stale</td><td>Stack dan model awal ada</td><td>Belum sinkron dengan migrations terbaru</td></tr><tr><td>Security</td><td>Partial/Stale</td><td>RLS/storage/threat model ada</td><td>Storage path, bootstrap role, executable checks belum sinkron</td></tr><tr><td>Supabase foundation</td><td>Partial/Strong</td><td>Setup, migration, validation ada</td><td>Belum rollback/restore dan latest lifecycle lengkap</td></tr><tr><td>UI brief</td><td>Partial</td><td>Mobile shell dan screen brief ada</td><td>Error/empty state dan role flow belum detail</td></tr><tr><td>QA/DevOps</td><td>Missing/Partial</td><td>Script test ada</td><td>CI gate, smoke matrix, account matrix, rollback runbook belum ada</td></tr></tbody></table>
+<h2>Recommended Documentation Backlog</h2>
+<p>Priority 0:</p>
+<ul><li>Restore or recreate <code>.env.local.example</code> because README references it.</li><li>Add production env runbook for Vercel preview and production.</li><li>Add QA account matrix for <code>bos@kantor.com</code> and <code>surveyor1@kantor.com</code>.</li><li>Add release smoke checklist.</li></ul>
+<p>Priority 1:</p>
+<ul><li>Update PRD with acceptance criteria per flow.</li><li>Update architecture with current Supabase table/trigger/RLS flow.</li><li>Update security docs for actual storage path and validation responsibility.</li><li>Add backend RLS matrix and storage policy matrix.</li></ul>
+<p>Priority 2:</p>
+<ul><li>Add integration tests against disposable Supabase/Postgres.</li><li>Add Playwright E2E for owner/surveyor isolation and nasabah lifecycle.</li><li>Add backup/restore/rollback runbook.</li><li>Add offline sync and conflict resolution spec.</li></ul>
+<h2>Kesimpulan</h2>
+<p>Flow bisnis terbaru sudah mulai terbentuk dengan benar di aplikasi: owner dan surveyor sudah dipisah, nasabah surveyor masuk draft, owner approve/reject, dan hiatus dipakai untuk arsip yang tidak muncul di flow karyawan. Bagian yang perlu dikejar sekarang adalah dokumentasi formal dan test/release gate supaya perubahan ini tidak cuma benar di UI saat ini, tetapi juga aman untuk dikembangkan agent lain dan siap diuji sebelum produksi.</p></main>
+  <script>
+    window.__flowDocReady = false;
+    window.addEventListener('load', async () => {
+      try {
+        if (window.mermaid) {
+          window.mermaid.initialize({
+            startOnLoad: false,
+            securityLevel: 'loose',
+            theme: 'base',
+            themeVariables: {
+              primaryColor: '#eef3eb',
+              primaryTextColor: '#19231f',
+              primaryBorderColor: '#486c55',
+              lineColor: '#486c55',
+              secondaryColor: '#f5efe8',
+              tertiaryColor: '#fbfcf8'
+            }
+          });
+          await window.mermaid.run({ querySelector: '.mermaid' });
+        }
+      } finally {
+        window.__flowDocReady = true;
+      }
+    });
+  </script>
+</body>
+</html>
