@@ -117,6 +117,22 @@ describe('dashboard projections', () => {
       nasabahMacet: 1,
     })
   })
+
+  it('excludes draft, rejected, and hiatus nasabah from active dashboard counts', () => {
+    const summary = calculateDashboardSummary(
+      [
+        nasabah[0],
+        { ...nasabah[0], id: 'draft-1', review_status: 'draft' },
+        { ...nasabah[0], id: 'rejected-1', review_status: 'rejected' },
+        { ...nasabah[0], id: 'hiatus-1', status: 'hiatus' },
+      ],
+      [],
+      '2026-06'
+    )
+
+    expect(summary.totalNasabahAktif).toBe(1)
+    expect(summary.totalOutstanding).toBe(2000000)
+  })
 })
 
 describe('nasabah lifecycle helpers', () => {

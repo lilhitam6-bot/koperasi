@@ -40,6 +40,9 @@ export interface SurveyorLocation {
 export type NasabahStatus = 'aktif' | 'lunas' | 'macet' | 'hiatus'
 export type NasabahReviewStatus = 'draft' | 'approved' | 'rejected'
 export type ScoreLabel = 'Excellent' | 'Good' | 'Fair' | 'At Risk'
+export type PaymentFrequency = 'weekly' | 'monthly'
+export type SetoranPaymentType = 'installment' | 'interest_only' | 'interest_principal'
+export type PaymentScheduleStatus = 'scheduled' | 'paid' | 'missed'
 
 export interface Nasabah {
   id: string
@@ -51,6 +54,13 @@ export interface Nasabah {
   tenor_bulan: number
   angsuran: number
   tgl_jatuh_tempo: number
+  payment_frequency?: PaymentFrequency
+  installment_count?: number
+  installment_amount?: number
+  interest_amount?: number
+  principal_amount?: number
+  monthly_due_day?: number | null
+  weekly_due_day?: number | null
   status: NasabahStatus
   review_status: NasabahReviewStatus
   submitted_by: string | null
@@ -66,6 +76,23 @@ export interface Nasabah {
 
 export type StatusBayar = 'tepat_waktu' | 'terlambat' | 'kurang'
 
+export interface PaymentSchedule {
+  id: string
+  nasabah_id: string
+  installment_number: number
+  original_due_date: string
+  due_date: string
+  amount_due: number
+  status: PaymentScheduleStatus
+  is_holiday: boolean
+  holiday_label: string | null
+  paid_at: string | null
+  setoran_id: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface Setoran {
   id: string
   nasabah_id: string
@@ -74,8 +101,16 @@ export interface Setoran {
   jumlah_dibayar: number
   jatuh_tempo: string
   status_bayar: StatusBayar
-  foto_bukti_url: string
+  foto_bukti_url: string | null
   notes: string | null
+  schedule_id?: string | null
+  payment_type?: SetoranPaymentType
+  installment_number?: number | null
+  interest_paid?: number
+  principal_paid?: number
+  idempotency_key?: string | null
+  sync_status?: 'pending' | 'synced' | 'failed'
+  source_device?: string | null
   created_at: string
   nasabah?: Pick<Nasabah, 'id' | 'nama'>
 }

@@ -1,8 +1,8 @@
 # PRD — LendMap PWA
-**Version:** 1.0.0  
-**Status:** Planning Baseline — Approved for v1.0 development planning  
-**Last Updated:** 2026-06-13  
-**Owner:** Engineering Lead  
+**Version:** 1.0.0
+**Status:** Planning Baseline — Approved for v1.0 development planning
+**Last Updated:** 2026-06-14
+**Owner:** Engineering Lead
 
 ---
 
@@ -50,6 +50,19 @@ Perusahaan kredit kecil beroperasi menggunakan komunikasi manual (WhatsApp, cata
 | Manajemen user (invite, suspend) | ❌ | ✅ |
 | Lihat audit log | ❌ | ✅ |
 
+### 3.3 Current Role Isolation Rules
+
+Implementasi saat ini memisahkan workspace berdasarkan role setelah login:
+
+- `owner` masuk ke Dashboard dan melihat menu Dashboard, Peta, Nasabah, Audit.
+- `surveyor` masuk ke Peta dan melihat menu Peta, Nasabah, Setoran.
+- `owner` dapat membuat nasabah langsung `approved`.
+- `surveyor` hanya dapat membuat nasabah sebagai `draft`.
+- `owner` dapat `approve` atau `reject` draft nasabah.
+- `owner` dapat memindahkan nasabah approved ke `hiatus` dan mengaktifkannya kembali.
+- `surveyor` tidak melihat nasabah `hiatus`.
+- Setoran hanya bisa dibuat untuk nasabah `approved` dan `aktif`.
+
 ---
 
 ## 4. Feature Specifications
@@ -80,20 +93,55 @@ kurang_prospektif → potensial ❌ (tidak diperbolehkan — area yang sudah dit
 ### 4.2 Manajemen Nasabah
 
 **Fungsionalitas:**
-- Input nasabah: nama, alamat teks, jumlah pinjaman, tanggal mulai, tenor (bulan), besaran angsuran, jadwal jatuh tempo (tanggal dalam bulan)
+- Input nasabah: nama, alamat teks, jumlah pinjaman, tanggal mulai, tipe angsuran (`weekly`/`monthly`), besaran angsuran, bunga, dan jadwal jatuh tempo.
+- Tipe `weekly` selalu membentuk kalender 6 kali angsuran mingguan dari tanggal mulai.
+- Tipe `monthly` dibayar sekali per bulan dengan pilihan setoran `bunga saja` atau `bunga + pokok`.
 - Setiap nasabah terhubung ke satu surveyor (assigned_to)
 - Owner dapat reassign nasabah antar surveyor
 - Owner dapat set batas maksimal nasabah aktif per surveyor (default: unlimited)
-- Status nasabah: `aktif`, `lunas`, `macet`
+- Status nasabah: `aktif`, `lunas`, `macet`, `hiatus`
+- Review status nasabah: `draft`, `approved`, `rejected`
 - Notifikasi push ke surveyor H-1 dan H+0 jatuh tempo tagihan
+
+**Lifecycle rules saat ini:**
+
+```text
+surveyor create -> draft
+owner create    -> approved + aktif
+draft           -> approved | rejected
+approved aktif  -> hiatus
+approved hiatus -> aktif
+```
+
+Business rules:
+
+- Data nasabah dari surveyor tidak otomatis masuk data aktif; harus diverifikasi owner.
+- Data nasabah dari owner menjadi data aktif tanpa review tambahan.
+- Data `hiatus` tetap tersimpan sebagai arsip owner, tetapi tidak muncul di workflow surveyor/karyawan.
+- Nasabah `draft`, `rejected`, dan `hiatus` tidak boleh dipakai untuk setoran.
+- Revisi nasabah `rejected` sudah ditetapkan sebagai kebutuhan produk: surveyor dapat memperbaiki lalu mengirim kembali sebagai `draft`. Form edit revisi belum menjadi bagian implementasi penuh saat ini.
 
 ### 4.3 Tracking Setoran
 
 **Fungsionalitas:**
-- Surveyor input setoran per nasabah: tanggal, jumlah dibayar, foto bukti (wajib)
+- Surveyor input setoran per nasabah: tanggal, jumlah dibayar, catatan, dan foto bukti opsional
 - Sistem otomatis menandai setoran sebagai `tepat_waktu`, `terlambat`, atau `kurang`
 - Setoran yang kurang dari jumlah angsuran dicatat sebagai partial payment
 - Riwayat setoran per nasabah tersedia untuk surveyor (milik sendiri) dan owner (semua)
+- Setoran disimpan ke Supabase `setoran`, bukan local-only state.
+- Bukti setoran disimpan di Supabase Storage bucket `setoran-photos`.
+- Setoran memakai `idempotency_key` untuk menekan risiko submit ganda.
+- Setoran weekly terhubung ke `nasabah_payment_schedules`; jadwal bisa ditandai libur dan dimundurkan.
+- Setoran monthly menyimpan breakdown `interest_paid` dan `principal_paid`.
+
+**Acceptance criteria:**
+
+- Surveyor tidak dapat mencatat setoran tanpa memilih nasabah approved dan aktif.
+- Surveyor tidak dapat mencatat nominal `<= 0`.
+- Jika bukti foto dilampirkan, file harus JPG/PNG/WEBP dan maksimal 5MB.
+- Setelah submit sukses, riwayat setoran tetap muncul setelah refresh.
+- RLS menolak insert setoran untuk nasabah draft, rejected, hiatus, lunas, atau macet.
+- Kalender weekly menampilkan 6 jadwal, status paid/scheduled, tanggal original, tanggal aktual, dan flag libur.
 
 ### 4.4 Scoring Nasabah (Otomatis)
 
@@ -131,6 +179,8 @@ Scoring dihitung ulang otomatis setiap kali ada update setoran.
 - Grafik distribusi status area (pie chart)
 - Grafik distribusi score nasabah (bar chart)
 - Filter periode untuk semua data
+- Summary dashboard hanya menghitung nasabah `approved`.
+- Nasabah aktif dashboard mengecualikan `draft`, `rejected`, dan `hiatus`.
 
 ### 4.6 Export Laporan
 
@@ -138,6 +188,18 @@ Scoring dihitung ulang otomatis setiap kali ada update setoran.
 |--------|-----|---------|
 | PDF | Summary eksekutif, grafik tren, tabel nasabah dengan score, performa per surveyor, peta screenshot area status | Owner |
 | Excel / CSV | Raw data nasabah aktif: nama, alamat, pinjaman, angsuran, total setoran, score, status | Owner / arsip |
+
+Current CSV export fields:
+
+- nama
+- alamat
+- pinjaman
+- angsuran
+- status
+- review_status
+- lifecycle
+- score
+- label
 
 ### 4.7 Notifikasi Push
 
@@ -188,3 +250,24 @@ Scoring dihitung ulang otomatis setiap kali ada update setoran.
 | 100% setoran tercatat via app (bukan WA) | Minggu 4 post-launch |
 | Owner menggunakan dashboard untuk review mingguan | Bulan 2 |
 | Zero data loss pada offline-sync scenario | 100% |
+
+---
+
+## 8. Current Acceptance Criteria Snapshot
+
+Core flows considered required before production data:
+
+- Owner and surveyor login with isolated workspaces.
+- Owner can create approved nasabah directly.
+- Surveyor can create draft nasabah.
+- Owner can approve/reject draft nasabah.
+- Owner can move approved nasabah to hiatus and reactivate it.
+- Surveyor cannot see hiatus nasabah.
+- Surveyor can create marker with GPS or manual coordinate.
+- Marker records persist to `area_markers` and survive refresh.
+- Marker photo upload goes to `marker-photos`.
+- Surveyor can create setoran for approved active nasabah.
+- Setoran records persist to `setoran` and survive refresh.
+- Setoran photo upload goes to `setoran-photos`.
+- Upload files are limited to JPG/PNG/WEBP and 5MB.
+- Automated gates pass: lint, typecheck, unit tests, build, and Playwright E2E.

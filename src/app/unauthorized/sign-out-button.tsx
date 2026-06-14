@@ -31,7 +31,7 @@ export function SignOutButton() {
   return (
     <div className="mt-6 grid gap-3">
       <button
-        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-ink/10 bg-white px-4 text-sm font-black text-ink hover:bg-clay/10"
+        className="inline-flex min-h-11 items-center justify-center gap-2 rounded border border-outline bg-white px-4 text-sm font-black text-ink hover:bg-clay/10"
         onClick={signOut}
         type="button"
         disabled={isSigningOut}
@@ -39,7 +39,7 @@ export function SignOutButton() {
         <LogOut size={16} />
         {isSigningOut ? 'Keluar...' : 'Logout dan ganti akun'}
       </button>
-      {errorMessage ? <p className="rounded-md border border-clay/30 bg-clay/10 px-3 py-2 text-sm font-semibold text-clay">{errorMessage}</p> : null}
+      {errorMessage ? <p className="rounded border border-clay/30 bg-clay/10 px-3 py-2 text-sm font-semibold text-clay">{errorMessage}</p> : null}
     </div>
   )
 }

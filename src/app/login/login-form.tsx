@@ -39,7 +39,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
       <label className="grid gap-2 text-sm font-bold">
         Email
         <input
-          className="min-h-12 rounded-md border border-ink/15 bg-white px-3 text-base outline-none ring-moss/25 focus:ring-4"
+          className="min-h-12 rounded border border-outline bg-white px-3 text-base outline-none ring-moss/25 focus:ring-4"
           type="email"
           autoComplete="email"
           value={email}
@@ -51,7 +51,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
       <label className="grid gap-2 text-sm font-bold">
         Password
         <input
-          className="min-h-12 rounded-md border border-ink/15 bg-white px-3 text-base outline-none ring-moss/25 focus:ring-4"
+          className="min-h-12 rounded border border-outline bg-white px-3 text-base outline-none ring-moss/25 focus:ring-4"
           type="password"
           autoComplete="current-password"
           value={password}
@@ -61,11 +61,11 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
       </label>
 
       {errorMessage ? (
-        <p className="rounded-md border border-clay/30 bg-clay/10 px-3 py-2 text-sm font-semibold text-clay">{errorMessage}</p>
+        <p className="rounded border border-clay/30 bg-clay/10 px-3 py-2 text-sm font-semibold text-clay">{errorMessage}</p>
       ) : null}
 
       <button
-        className="inline-flex min-h-12 items-center justify-center gap-2 rounded-md bg-moss px-4 py-3 text-sm font-black text-white hover:bg-moss/90"
+        className="inline-flex min-h-12 items-center justify-center gap-2 rounded bg-primary px-4 py-3 text-sm font-black text-white hover:bg-moss"
         type="submit"
         disabled={isSubmitting}
       >

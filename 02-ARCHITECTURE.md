@@ -1,6 +1,6 @@
 # System Architecture — LendMap PWA
-**Version:** 1.0.0  
-**Status:** Planning Baseline — Approved for v1.0 development planning  
+**Version:** 1.0.0
+**Status:** Planning Baseline + 2026-06-14 Implementation Addendum
 
 ---
 
@@ -36,6 +36,33 @@
 │                    VERCEL (Hosting)                      │
 │            Next.js App + Static Assets + CDN             │
 └─────────────────────────────────────────────────────────┘
+```
+
+### 1.1 Current Source-of-Truth Addendum
+
+Per 2026-06-14, core operational data is no longer treated as seed/local state:
+
+- Auth session and active profile come from Supabase Auth + `profiles`.
+- Nasabah list comes from Supabase `nasabah`.
+- Setoran list and submit flow use Supabase `setoran`.
+- Marker list and submit flow use Supabase `area_markers`.
+- Marker photos use Storage bucket `marker-photos`.
+- Setoran proof photos use Storage bucket `setoran-photos`.
+- Local state remains for forms, loading/error state, optimistic display, and offline queue preview.
+
+```mermaid
+flowchart TD
+  Auth[Supabase Auth] --> Profile[profiles active profile]
+  Profile --> RoleUI[Role-isolated Next.js UI]
+  RoleUI --> Nasabah[nasabah]
+  RoleUI --> Setoran[setoran]
+  RoleUI --> Markers[area_markers]
+  RoleUI --> Storage[marker-photos / setoran-photos]
+  Markers --> History[area_status_history trigger]
+  Setoran --> Score[recalculate_nasabah_score trigger]
+  Nasabah --> Audit[audit_log trigger]
+  Setoran --> Audit
+  Markers --> Audit
 ```
 
 ---
@@ -155,11 +182,38 @@ CREATE TABLE nasabah (
   tenor_bulan     INT NOT NULL,
   angsuran        BIGINT NOT NULL,
   tgl_jatuh_tempo INT NOT NULL CHECK (tgl_jatuh_tempo BETWEEN 1 AND 28),
-  status          TEXT NOT NULL DEFAULT 'aktif' CHECK (status IN ('aktif', 'lunas', 'macet')),
+  payment_frequency TEXT NOT NULL DEFAULT 'weekly',
+  installment_count INT NOT NULL DEFAULT 6,
+  installment_amount BIGINT NOT NULL DEFAULT 0,
+  interest_amount BIGINT NOT NULL DEFAULT 0,
+  principal_amount BIGINT NOT NULL DEFAULT 0,
+  monthly_due_day INT,
+  weekly_due_day INT,
+  status          TEXT NOT NULL DEFAULT 'aktif' CHECK (status IN ('aktif', 'lunas', 'macet', 'hiatus')),
+  review_status   TEXT NOT NULL DEFAULT 'approved' CHECK (review_status IN ('draft', 'approved', 'rejected')),
+  submitted_by    UUID REFERENCES profiles(id),
+  reviewed_by     UUID REFERENCES profiles(id),
+  reviewed_at     TIMESTAMPTZ,
+  review_notes    TEXT,
   score           NUMERIC(5,2) DEFAULT 0,
   score_label     TEXT DEFAULT 'At Risk',
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- NASABAH PAYMENT SCHEDULES
+CREATE TABLE nasabah_payment_schedules (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nasabah_id         UUID NOT NULL REFERENCES nasabah(id) ON DELETE CASCADE,
+  installment_number INT NOT NULL,
+  original_due_date  DATE NOT NULL,
+  due_date           DATE NOT NULL,
+  amount_due         BIGINT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'scheduled',
+  is_holiday         BOOLEAN NOT NULL DEFAULT FALSE,
+  holiday_label      TEXT,
+  paid_at            TIMESTAMPTZ,
+  setoran_id         UUID REFERENCES setoran(id) ON DELETE SET NULL
 );
 
 -- SETORAN
@@ -171,8 +225,16 @@ CREATE TABLE setoran (
   jumlah_dibayar  BIGINT NOT NULL,
   jatuh_tempo     DATE NOT NULL,
   status_bayar    TEXT NOT NULL CHECK (status_bayar IN ('tepat_waktu', 'terlambat', 'kurang')),
-  foto_bukti_url  TEXT NOT NULL,        -- wajib, Supabase Storage URL
+  foto_bukti_url  TEXT,                 -- optional, Supabase Storage URL
   notes           TEXT,
+  schedule_id     UUID REFERENCES nasabah_payment_schedules(id),
+  payment_type    TEXT NOT NULL DEFAULT 'installment',
+  installment_number INT,
+  interest_paid   BIGINT NOT NULL DEFAULT 0,
+  principal_paid  BIGINT NOT NULL DEFAULT 0,
+  idempotency_key TEXT,
+  sync_status     TEXT NOT NULL DEFAULT 'synced',
+  source_device   TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -198,6 +260,18 @@ CREATE TABLE push_subscriptions (
   auth        TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- SURVEYOR LOCATIONS
+CREATE TABLE surveyor_locations (
+  surveyor_id      UUID PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  latitude         DOUBLE PRECISION NOT NULL,
+  longitude        DOUBLE PRECISION NOT NULL,
+  accuracy_meters  DOUBLE PRECISION,
+  heading          DOUBLE PRECISION,
+  speed_mps        DOUBLE PRECISION,
+  captured_at      TIMESTAMPTZ NOT NULL,
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
 ### 3.2 Indexes
@@ -210,6 +284,12 @@ CREATE INDEX idx_nasabah_status ON nasabah(status);
 CREATE INDEX idx_setoran_nasabah ON setoran(nasabah_id);
 CREATE INDEX idx_setoran_surveyor ON setoran(surveyor_id);
 CREATE INDEX idx_setoran_tanggal ON setoran(tanggal);
+CREATE UNIQUE INDEX idx_setoran_surveyor_idempotency
+  ON setoran(surveyor_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_setoran_nasabah_tanggal ON setoran(nasabah_id, tanggal DESC);
+CREATE INDEX idx_nasabah_review_status ON nasabah(review_status);
+CREATE INDEX idx_nasabah_submitted_by ON nasabah(submitted_by);
 CREATE INDEX idx_audit_log_actor ON audit_log(actor_id);
 CREATE INDEX idx_audit_log_table ON audit_log(table_name, created_at);
 ```
@@ -246,12 +326,17 @@ CREATE POLICY "surveyor_own_nasabah" ON nasabah
     )
   );
 
--- setoran: surveyor hanya akses setoran nasabah miliknya
+-- setoran: surveyor hanya insert setoran untuk nasabah miliknya yang approved + aktif
 ALTER TABLE setoran ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "surveyor_own_setoran" ON setoran
-  FOR ALL USING (
-    surveyor_id = auth.uid() OR EXISTS (
-      SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'owner'
+CREATE POLICY "surveyor_insert_own_setoran" ON setoran
+  FOR INSERT WITH CHECK (
+    surveyor_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM nasabah customer
+      WHERE customer.id = nasabah_id
+        AND customer.surveyor_id = auth.uid()
+        AND customer.review_status = 'approved'
+        AND customer.status = 'aktif'
     )
   );
 
@@ -262,6 +347,20 @@ CREATE POLICY "owner_read_audit" ON audit_log
     SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'owner'
   ));
 ```
+
+### 3.4 Table Access Matrix
+
+| Resource | Owner | Surveyor | Notes |
+| --- | --- | --- | --- |
+| `profiles` | read/manage active users | read own profile | New users default to surveyor |
+| `nasabah` | read all, create approved, review, hiatus/reactivate | create own draft, read own non-hiatus | Draft/rejected/hiatus cannot be used for setoran |
+| `setoran` | read all, insert as owner | read/insert own approved-active customer setoran | `idempotency_key` reduces duplicate submit |
+| `area_markers` | read/update all | read/update own markers | Insert creates status history trigger |
+| `area_status_history` | read all | read own marker history | Trigger-owned, not client-written |
+| `surveyor_locations` | read all | upsert own location | Realtime publication configured |
+| `audit_log` | read | no access | DB trigger writes |
+| `marker-photos` | read all allowed by policy | upload/read own path | `{userId}/{timestamp}-{slug}.{ext}` |
+| `setoran-photos` | read all allowed by policy | upload/read own path | Optional proof upload |
 
 ---
 

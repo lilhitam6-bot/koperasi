@@ -5,6 +5,7 @@
 **Primary device:** Mobile phone, 360-430px width  
 **Secondary device:** Tablet and desktop dashboard  
 **Tone:** Field-operations tool: fast, legible, trustworthy, practical.
+**Last updated:** 2026-06-14
 
 ---
 
@@ -35,6 +36,9 @@ Main jobs:
 - Review field coverage in Sukabumi.
 - Check audit and offline sync status.
 - Export borrower data.
+- Create approved nasabah directly.
+- Review surveyor draft nasabah.
+- Move inactive-but-retained nasabah to hiatus and reactivate them later.
 
 ### Surveyor
 
@@ -51,6 +55,7 @@ Main jobs:
 - Review assigned borrowers.
 - Record payment amount.
 - Store payment offline if signal is poor.
+- Create nasabah only as draft for owner review.
 
 ---
 
@@ -175,11 +180,22 @@ Borrower card content:
 - Installment amount
 - Due date
 - Status
+- Review/lifecycle label:
+  - Draft menunggu review
+  - Approved aktif
+  - Ditolak
+  - Hiatus
+  - Lunas
+  - Macet
 
 Card requirements:
 - Score badge wraps below name if needed.
 - Currency must not overflow.
 - Cards should be easy to scan with one hand.
+- Owner sees active, draft review, and archive sections.
+- Surveyor sees own non-hiatus records.
+- Draft and rejected states must not look payable.
+- Hiatus is an owner archive state, not a deleted state.
 
 ### Setoran
 
@@ -188,17 +204,30 @@ Purpose: fast payment input.
 Mobile hierarchy:
 1. Page title: Input setoran
 2. Customer select
-3. Amount input
-4. Status preview
-5. Primary action:
+3. Weekly calendar selector for 6 installment schedules, when selected customer is weekly
+4. Holiday action for each weekly schedule: move 1 week or restore original date
+5. Monthly payment mode, when selected customer is monthly: `bunga saja` or `bunga + pokok`
+6. Payment date input
+7. Amount input
+8. Optional proof photo input
+9. Notes input
+10. Status preview
+11. Primary action:
    - Online: `Catat setoran`
    - Offline: `Simpan ke queue offline`
-6. Recent payment list
+12. Recent payment list
 
 Requirements:
 - Input controls at least 48px high.
 - Primary action full width.
 - Offline mode must be visually clear.
+- Customer select must only contain approved active nasabah.
+- Weekly customers must show the six installment calendar and paid/scheduled state.
+- Holiday moves must be visible as original date + current due date.
+- Monthly customers must expose the interest-only versus interest+principal choice.
+- Show empty state when no approved active nasabah is payable.
+- Show inline error when Supabase insert or upload fails.
+- Successful submit clears form fields and refreshes recent history.
 
 ### Audit & Sync
 
@@ -274,22 +303,39 @@ Desktop:
 
 ---
 
-## 9. Current MVP Constraints
+## 9. Current Implementation Status
 
-Current MVP uses:
-- Local seed data
+Current implementation uses:
+- Supabase Auth and active profile gate
+- Role-isolated navigation and first screen
+- Supabase-backed nasabah data
+- Supabase-backed marker data in `area_markers`
+- Supabase-backed setoran data in `setoran`
 - OpenStreetMap/Leaflet for Sukabumi map
 - Foreground geolocation tracking while app is open
 - Simulated offline queue
 - Simulated audit feed
 - CSV export in browser
+- Storage upload for marker photos and setoran proof photos
+- Storage validation for JPG/PNG/WEBP and max 5MB
+- Playwright E2E coverage for owner/surveyor workspace smoke flows
 
 Production integration still needed:
-- Supabase Auth
-- Supabase Postgres
-- RLS policies
-- Storage photo upload
 - Realtime updates
+- IndexedDB offline queue sync
 - Edge Functions for push/export
+- Full rejected-nasabah revision form
 
-Design should not assume these integrations are complete, but should leave clear states for loading, empty, offline, sync failed, and permission denied.
+Design should treat Supabase as the current source of truth for nasabah, markers, and setoran. It should still leave clear states for loading, empty, offline, sync failed, permission denied, and upload failed.
+
+## 10. Empty and Error State Matrix
+
+| Screen | Empty state | Error state | Primary recovery |
+| --- | --- | --- | --- |
+| Login | Not applicable | Wrong credentials or missing env | Show inline error, stay on login |
+| Owner dashboard | No setoran/nasabah yet | Failed data load | Keep shell, show retry-ready copy |
+| Map | No markers yet | GPS denied/unavailable or marker insert failed | Manual coordinate input, retry save |
+| Nasabah owner | No active/draft/archive records | Create/review/hiatus/reactivate failed | Inline error near section |
+| Nasabah surveyor | No own records | Draft create failed | Keep form values, retry |
+| Setoran | No approved active nasabah | Upload/insert failed | Inline error, keep selected values |
+| Audit | No queue/events | Sync failed | Show failed queue count and retry action |

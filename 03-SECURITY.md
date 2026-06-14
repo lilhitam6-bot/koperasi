@@ -1,6 +1,7 @@
 # Security Policy — LendMap PWA
-**Version:** 1.0.0  
-**Classification:** Internal — Engineering + QA + CyberSec Review  
+**Version:** 1.0.0
+**Classification:** Internal — Engineering + QA + CyberSec Review
+**Last Updated:** 2026-06-14
 
 ---
 
@@ -43,6 +44,8 @@
 - Refresh token: 7 hari, single-use rotating
 - Password policy: minimum 8 karakter, wajib mengandung angka
 - Tidak ada OAuth third-party (Google, dsb) untuk mengurangi attack surface
+- New Auth users are bootstrapped into `profiles` as `surveyor` by default.
+- Owner promotion must be done through owner/admin SQL or service-role workflow, not by trusting user-provided signup metadata.
 
 ### 2.2 Session Management
 
@@ -120,6 +123,30 @@ CREATE POLICY "read_marker_photo" ON storage.objects
 -- Sama untuk setoran-photos bucket
 ```
 
+Current bucket rules:
+
+- Buckets are private.
+- `marker-photos` and `setoran-photos` are limited to 5MB.
+- Allowed MIME types: `image/jpeg`, `image/png`, `image/webp`.
+- Object path format from the client helper: `{userId}/{timestamp}-{slug}.{ext}`.
+- Client validation rejects unsupported file types and files above 5MB before upload.
+
+### 3.3 Current Critical RLS Rules
+
+Current production-critical rules:
+
+- Surveyor can insert nasabah only as own `draft`.
+- Owner can create approved nasabah directly.
+- Surveyor can read own nasabah except `hiatus`.
+- Owner can read and manage all nasabah.
+- Surveyor can insert setoran only when the target nasabah is owned by them, `review_status = 'approved'`, and `status = 'aktif'`.
+- Surveyor can insert/update own markers.
+- Owner can read/update all markers.
+- `area_status_history` is trigger-owned and read-only to clients.
+- `audit_log` is owner-readable only.
+
+Security regression tests assert the setoran approved-active rule, private image-limited buckets, and hardened user bootstrap.
+
 ---
 
 ## 4. Data Security
@@ -159,9 +186,16 @@ function validatePhoto(file: File): { valid: boolean; error?: string } {
   return { valid: true }
 }
 
-// Naming convention di Storage: {user_id}/{timestamp}_{random}.jpg
+// Naming convention di Storage: {userId}/{timestamp}-{slug}.{ext}
 // Mencegah path traversal dan file overwrite
 ```
+
+Current implementation:
+
+- `validateEvidenceFile(file)` rejects unsupported MIME types.
+- `validateEvidenceFile(file)` rejects files above 5MB.
+- `uploadEvidenceFile(...)` calls validation before upload.
+- Supabase bucket policies remain the final enforcement layer.
 
 ---
 

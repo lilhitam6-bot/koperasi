@@ -3,6 +3,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 export const MARKER_PHOTOS_BUCKET = 'marker-photos'
 export const SETORAN_PHOTOS_BUCKET = 'setoran-photos'
 
+const ALLOWED_EVIDENCE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const MAX_EVIDENCE_FILE_SIZE = 5 * 1024 * 1024
+
 export function buildUserStoragePath({
   userId,
   fileName,
@@ -35,6 +38,11 @@ export async function uploadEvidenceFile({
   supabase: SupabaseClient
   userId: string
 }): Promise<string> {
+  const validation = validateEvidenceFile(file)
+  if (!validation.ok) {
+    throw new Error(validation.message)
+  }
+
   const path = buildUserStoragePath({
     userId,
     fileName: file.name,
@@ -49,4 +57,16 @@ export async function uploadEvidenceFile({
   }
 
   return path
+}
+
+export function validateEvidenceFile(file: File): { ok: true } | { ok: false; message: string } {
+  if (!ALLOWED_EVIDENCE_MIME_TYPES.has(file.type)) {
+    return { ok: false, message: 'File harus berupa JPG, PNG, atau WEBP.' }
+  }
+
+  if (file.size > MAX_EVIDENCE_FILE_SIZE) {
+    return { ok: false, message: 'Ukuran file maksimal 5MB.' }
+  }
+
+  return { ok: true }
 }

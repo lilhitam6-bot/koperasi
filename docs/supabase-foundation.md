@@ -1,6 +1,6 @@
 # Supabase Foundation Setup
 
-**Status:** Ready to apply to a Supabase project  
+**Status:** Applied to project `seelloevkfehricvxxmt`; latest local/remote migration is `20260614173000_payment_calendar_schedule.sql`
 **Scope:** Auth, database schema, RLS, storage buckets, audit triggers, scoring trigger, and frontend env wiring.
 
 ---
@@ -11,6 +11,9 @@ Files:
 - `supabase/config.toml`
 - `supabase/migrations/20260613150000_initial_foundation.sql`
 - `supabase/migrations/20260614094500_surveyor_locations.sql`
+- `supabase/migrations/20260614121500_nasabah_review_workflow.sql`
+- `supabase/migrations/20260614160000_setoran_flow_hardening.sql`
+- `supabase/migrations/20260614173000_payment_calendar_schedule.sql`
 - `src/lib/supabase-env.ts`
 - `src/lib/supabase-browser.ts`
 - `src/lib/supabase-server.ts`
@@ -32,6 +35,7 @@ The migrations create:
 - `area_markers`
 - `area_status_history`
 - `nasabah`
+- `nasabah_payment_schedules`
 - `setoran`
 - `audit_log`
 - `push_subscriptions`
@@ -54,6 +58,22 @@ It also adds:
 - Nasabah score recalculation trigger on setoran changes
 - Auth user profile bootstrap trigger
 - Realtime publication membership for `surveyor_locations`
+- Nasabah review workflow:
+  - `draft`
+  - `approved`
+  - `rejected`
+  - `hiatus`
+- Setoran hardening:
+  - `idempotency_key`
+  - `sync_status`
+  - `source_device`
+  - nullable optional `foto_bukti_url`
+- Payment calendar workflow:
+  - `payment_frequency` on nasabah (`weekly`/`monthly`)
+  - 6 weekly installment schedules in `nasabah_payment_schedules`
+  - holiday/moved schedule tracking
+  - monthly payment breakdown (`interest_paid`, `principal_paid`)
+- Auth bootstrap hardening: new users default to `surveyor`
 
 ---
 
@@ -88,6 +108,23 @@ supabase link --project-ref YOUR_PROJECT_REF
 supabase db push
 ```
 
+Project used during current implementation:
+
+```bash
+supabase link --project-ref seelloevkfehricvxxmt
+supabase db push
+supabase migration list
+```
+
+Expected migration list:
+
+```text
+20260613150000
+20260614094500
+20260614121500
+20260614160000
+```
+
 Without Supabase CLI:
 
 1. Open Supabase SQL Editor.
@@ -99,10 +136,10 @@ Without Supabase CLI:
 
 ## 5. Environment Variables
 
-Copy `.env.local.example` to `.env.local`:
+Create `.env.local` from the local template used by the project:
 
 ```bash
-cp .env.local.example .env.local
+cp ".env.local template" .env.local
 ```
 
 Fill:
@@ -113,6 +150,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
+SUPABASE_PROJECT_REF=seelloevkfehricvxxmt
 ```
 
 Rules:
@@ -143,6 +181,22 @@ set role = 'owner',
 where id = 'AUTH_USER_UUID';
 ```
 
+Current QA accounts:
+
+| Role | Email | Password | Expected profile role |
+| --- | --- | --- | --- |
+| Owner | `bos@kantor.com` | `bos123` | `owner` |
+| Surveyor | `surveyor1@kantor.com` | `surveyor123.` | `surveyor` |
+
+These accounts are used by Playwright E2E defaults and can be overridden with:
+
+```bash
+E2E_OWNER_EMAIL=
+E2E_OWNER_PASSWORD=
+E2E_SURVEYOR_EMAIL=
+E2E_SURVEYOR_PASSWORD=
+```
+
 To disable a resigned user:
 
 ```sql
@@ -171,6 +225,11 @@ Run these checks before inserting production borrower/payment data:
 12. Confirm Owner can read `audit_log`.
 13. Upload `marker-photos/{auth.uid()}/test.webp`.
 14. Confirm another surveyor cannot read it.
+15. Login as Surveyor A.
+16. Try inserting setoran for draft/rejected/hiatus nasabah.
+17. Confirm RLS rejects the insert.
+18. Upload `setoran-photos/{auth.uid()}/test.webp`.
+19. Confirm another surveyor cannot read it.
 
 Do not proceed to production data until those checks pass.
 
@@ -185,13 +244,20 @@ Done:
 - Migration is test-covered for required schema/RLS/audit/storage features.
 - Login UI wired to Supabase Auth.
 - `surveyor_locations` table and Supabase Realtime publication.
+- Marker records are loaded from and inserted into `area_markers`.
 - Marker photo upload helper wired to the marker form.
+- Setoran records are loaded from and inserted into `setoran`.
+- Setoran proof upload wired to `setoran-photos`.
+- Weekly payment calendar is loaded from `nasabah_payment_schedules`; setoran can mark a schedule paid.
+- Monthly setoran supports `interest_only` and `interest_principal`.
+- Nasabah draft/approve/reject/hiatus/reactivate workflow.
+- Storage validation for JPG/PNG/WEBP and 5MB max.
+- Playwright E2E for owner/surveyor isolation and key workflows.
 - Route guards and middleware.
 
 Not done yet:
 - Supabase Realtime channel subscription for owner-facing live surveyor GPS.
-- Replacing seed data with Supabase queries.
-- Setoran photo upload flow to Supabase Storage.
 - IndexedDB offline queue sync to Supabase.
 - Web Push Edge Functions.
 - PDF/Excel export Edge Functions.
+- Full edit/revision form for rejected nasabah returning to draft.

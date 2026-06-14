@@ -15,7 +15,7 @@ describe('Supabase foundation migration', () => {
   it('creates the core lending tables', () => {
     const text = sql()
 
-    for (const table of ['profiles', 'area_markers', 'area_status_history', 'nasabah', 'setoran', 'audit_log', 'push_subscriptions']) {
+    for (const table of ['profiles', 'area_markers', 'area_status_history', 'nasabah', 'nasabah_payment_schedules', 'setoran', 'audit_log', 'push_subscriptions']) {
       expect(text).toContain(`create table if not exists public.${table}`)
     }
   })
@@ -23,7 +23,7 @@ describe('Supabase foundation migration', () => {
   it('enables RLS and owner/surveyor access policies', () => {
     const text = sql()
 
-    for (const table of ['profiles', 'area_markers', 'area_status_history', 'nasabah', 'setoran', 'audit_log', 'push_subscriptions']) {
+    for (const table of ['profiles', 'area_markers', 'area_status_history', 'nasabah', 'nasabah_payment_schedules', 'setoran', 'audit_log', 'push_subscriptions']) {
       expect(text).toContain(`alter table public.${table} enable row level security`)
       expect(text).toContain(`alter table public.${table} force row level security`)
     }
@@ -70,5 +70,17 @@ describe('Supabase foundation migration', () => {
     expect(text).toContain('create policy "surveyor_update_own_draft_nasabah"')
     expect(text).toContain("customer.review_status = 'approved'")
     expect(text).toContain("customer.status = 'aktif'")
+  })
+
+  it('adds payment product fields and weekly payment schedules', () => {
+    const text = sql()
+
+    expect(text).toContain("payment_frequency text not null default 'weekly'")
+    expect(text).toContain('installment_count integer not null default 6')
+    expect(text).toContain('create table if not exists public.nasabah_payment_schedules')
+    expect(text).toContain('original_due_date date not null')
+    expect(text).toContain('is_holiday boolean not null default false')
+    expect(text).toContain("payment_type text not null default 'installment'")
+    expect(text).toContain("payment_type in ('installment', 'interest_only', 'interest_principal')")
   })
 })

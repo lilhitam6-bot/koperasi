@@ -59,7 +59,7 @@ export function SukabumiLeafletMap({
     markers.forEach((marker) => {
       L.circleMarker([marker.latitude, marker.longitude], {
         radius: 10,
-        color: '#fffaf0',
+        color: '#ffffff',
         weight: 3,
         fillColor: AREA_STATUS_COLORS[marker.status],
         fillOpacity: 0.95,
@@ -71,9 +71,9 @@ export function SukabumiLeafletMap({
     if (surveyorLocation) {
       L.circleMarker([surveyorLocation.latitude, surveyorLocation.longitude], {
         radius: 12,
-        color: '#fffaf0',
+        color: '#ffffff',
         weight: 4,
-        fillColor: '#276d86',
+        fillColor: '#32647f',
         fillOpacity: 1,
       })
         .bindPopup(
@@ -83,9 +83,9 @@ export function SukabumiLeafletMap({
 
       L.circle([surveyorLocation.latitude, surveyorLocation.longitude], {
         radius: surveyorLocation.accuracy_meters ?? 30,
-        color: '#276d86',
+        color: '#32647f',
         weight: 1,
-        fillColor: '#276d86',
+        fillColor: '#32647f',
         fillOpacity: 0.12,
       }).addTo(layer)
     }
@@ -100,9 +100,9 @@ export function SukabumiLeafletMap({
   }, [bounds, focusLocationRequest, markers, surveyorLocation])
 
   return (
-    <div className="relative h-[58vh] min-h-[360px] overflow-hidden rounded-lg border border-ink/10 bg-field sm:h-[520px]">
+    <div className="relative h-[58vh] min-h-[360px] overflow-hidden rounded border border-outline bg-surface-low sm:h-[520px]">
       <div ref={containerRef} className="h-full w-full" aria-label="Peta OpenStreetMap area Sukabumi" />
-      <div className="pointer-events-none absolute left-3 top-3 z-[500] rounded-lg bg-white/95 px-3 py-2 text-xs font-black shadow-line sm:left-4 sm:top-4 sm:text-sm">
+      <div className="pointer-events-none absolute left-3 top-3 z-[500] rounded border border-outline bg-white/95 px-3 py-2 text-xs font-black shadow-line sm:left-4 sm:top-4 sm:text-sm">
         Sukabumi · OpenStreetMap
       </div>
     </div>

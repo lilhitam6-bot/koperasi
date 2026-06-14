@@ -4,13 +4,16 @@
 
 :root {
   color-scheme: light;
-  --ink: #17211a;
-  --field: #f5f0e7;
-  --paper: #fffaf0;
-  --moss: #235a45;
-  --clay: #b95738;
-  --maize: #e5b94f;
-  --river: #276d86;
+  --ink: #1b1c1a;
+  --field: #fbf9f5;
+  --paper: #ffffff;
+  --surface-low: #f5f3ef;
+  --surface-container: #efeeea;
+  --outline: #c1c9be;
+  --moss: #2e5a35;
+  --clay: #ba1a1a;
+  --maize: #d9a441;
+  --river: #32647f;
 }
 
 * {
@@ -26,18 +29,18 @@ body {
   min-height: 100%;
   margin: 0;
   color: var(--ink);
-  background:
-    linear-gradient(90deg, rgba(35, 90, 69, 0.06) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(35, 90, 69, 0.05) 1px, transparent 1px),
-    var(--field);
-  background-size: 28px 28px;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--field);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   letter-spacing: 0;
 }
 
 button,
 input,
 select {
+  font: inherit;
+}
+
+textarea {
   font: inherit;
 }
 
@@ -48,6 +51,11 @@ button {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+:focus-visible {
+  outline: 2px solid var(--moss);
+  outline-offset: 2px;
 }
 
 .leaflet-container {
@@ -61,4 +69,8 @@ button:disabled {
     linear-gradient(135deg, rgba(35, 90, 69, 0.15) 25%, transparent 25%) 0 0 / 34px 34px,
     linear-gradient(45deg, rgba(185, 87, 56, 0.1) 25%, transparent 25%) 0 0 / 48px 48px,
     #dfe8d7;
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
