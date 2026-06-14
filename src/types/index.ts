@@ -37,7 +37,8 @@ export interface SurveyorLocation {
   captured_at: string
 }
 
-export type NasabahStatus = 'aktif' | 'lunas' | 'macet'
+export type NasabahStatus = 'aktif' | 'lunas' | 'macet' | 'hiatus'
+export type NasabahReviewStatus = 'draft' | 'approved' | 'rejected'
 export type ScoreLabel = 'Excellent' | 'Good' | 'Fair' | 'At Risk'
 
 export interface Nasabah {
@@ -51,6 +52,11 @@ export interface Nasabah {
   angsuran: number
   tgl_jatuh_tempo: number
   status: NasabahStatus
+  review_status: NasabahReviewStatus
+  submitted_by: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  review_notes: string | null
   score: number
   score_label: ScoreLabel
   created_at: string

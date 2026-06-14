@@ -53,16 +53,26 @@ export function calculateDashboardSummary(
   setoran: Setoran[],
   month: string
 ): DashboardSummary {
+  const approvedNasabah = nasabah.filter((item) => item.review_status === 'approved')
+
   return {
-    totalNasabahAktif: nasabah.filter((item) => item.status === 'aktif').length,
-    totalOutstanding: nasabah
+    totalNasabahAktif: approvedNasabah.filter((item) => item.status === 'aktif').length,
+    totalOutstanding: approvedNasabah
       .filter((item) => item.status === 'aktif')
       .reduce((sum, item) => sum + item.jumlah_pinjaman, 0),
     totalSetoranBulanIni: setoran
       .filter((item) => item.tanggal.startsWith(month))
       .reduce((sum, item) => sum + item.jumlah_dibayar, 0),
-    nasabahMacet: nasabah.filter((item) => item.status === 'macet').length,
+    nasabahMacet: approvedNasabah.filter((item) => item.status === 'macet').length,
   }
+}
+
+export function isApprovedActiveNasabah(nasabah: Nasabah): boolean {
+  return nasabah.review_status === 'approved' && nasabah.status === 'aktif'
+}
+
+export function isNasabahVisibleToSurveyor(nasabah: Nasabah): boolean {
+  return nasabah.status !== 'hiatus'
 }
 
 export function projectOfflineQueue(queue: OfflineQueueItem[]): QueueProjection {

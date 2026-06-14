@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { auditSeed, markerSeed, nasabahSeed, offlineSeed, setoranSeed } from '@/data/seed'
 import { useForegroundLocationTracking } from '@/hooks/use-foreground-location-tracking'
 import {
@@ -26,6 +26,8 @@ import {
   determineStatusBayar,
   formatRupiah,
   getCurrentMonth,
+  isApprovedActiveNasabah,
+  isNasabahVisibleToSurveyor,
   projectOfflineQueue,
   toCsv,
 } from '@/lib/domain'
@@ -41,6 +43,16 @@ type TrackerMarkerFormInput = {
   status: AreaStatus
   notes: string
   photoFile: File | null
+}
+type NasabahFormInput = {
+  nama: string
+  alamat: string
+  jumlahPinjaman: number
+  tanggalMulai: string
+  tenorBulan: number
+  angsuran: number
+  tglJatuhTempo: number
+  surveyorId: string
 }
 type MarkerCoordinateMode = 'gps' | 'manual'
 
@@ -75,7 +87,8 @@ export function LendMapApp({ currentProfile }: { currentProfile: Profile }) {
   const router = useRouter()
   const role = currentProfile.role
   const [activeView, setActiveView] = useState<ViewKey>(() => (role === 'owner' ? 'dashboard' : 'map'))
-  const [nasabah] = useState<Nasabah[]>(nasabahSeed)
+  const [nasabah, setNasabah] = useState<Nasabah[]>(nasabahSeed)
+  const [surveyorOptions, setSurveyorOptions] = useState<Pick<Profile, 'id' | 'full_name'>[]>([])
   const [markers, setMarkers] = useState<AreaMarker[]>(markerSeed)
   const [setoran, setSetoran] = useState<Setoran[]>(setoranSeed)
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>(auditSeed)
@@ -93,14 +106,49 @@ export function LendMapApp({ currentProfile }: { currentProfile: Profile }) {
   const locationTracking = useForegroundLocationTracking(trackingSurveyorId)
   const views = role === 'owner' ? ownerViews : surveyorViews
   const safeView = views.includes(activeView) ? activeView : views[0]
-  const visibleNasabah = role === 'owner' ? nasabah : nasabah.filter((item) => item.surveyor_id === currentUser.id)
+  const visibleNasabah = role === 'owner' ? nasabah : nasabah.filter((item) => item.surveyor_id === currentUser.id && isNasabahVisibleToSurveyor(item))
+  const payableNasabah = visibleNasabah.filter(isApprovedActiveNasabah)
   const visibleMarkers = role === 'owner' ? markers : markers.filter((item) => item.surveyor_id === currentUser.id)
   const visibleSetoran = role === 'owner' ? setoran : setoran.filter((item) => item.surveyor_id === currentUser.id)
   const summary = useMemo(() => calculateDashboardSummary(nasabah, setoran, getCurrentMonth(new Date('2026-06-13'))), [nasabah, setoran])
   const queueProjection = useMemo(() => projectOfflineQueue(offlineQueue), [offlineQueue])
 
+  useEffect(() => {
+    const supabase = createLendMapBrowserClient()
+
+    async function loadNasabah() {
+      const { data, error } = await supabase
+        .from('nasabah')
+        .select('id, surveyor_id, nama, alamat, jumlah_pinjaman, tanggal_mulai, tenor_bulan, angsuran, tgl_jatuh_tempo, status, review_status, submitted_by, reviewed_by, reviewed_at, review_notes, score, score_label, created_at, updated_at')
+        .order('created_at', { ascending: false })
+
+      if (!error && data) {
+        setNasabah(data as Nasabah[])
+        const firstPayable = (data as Nasabah[]).find(isApprovedActiveNasabah)
+        setSelectedNasabahId(firstPayable?.id ?? '')
+      }
+    }
+
+    async function loadSurveyors() {
+      if (role !== 'owner') return
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('role', 'surveyor')
+        .eq('is_active', true)
+        .order('full_name')
+
+      if (!error && data) {
+        setSurveyorOptions(data)
+      }
+    }
+
+    void loadNasabah()
+    void loadSurveyors()
+  }, [role])
+
   function submitSetoran() {
-    const customer = nasabah.find((item) => item.id === selectedNasabahId)
+    const customer = payableNasabah.find((item) => item.id === selectedNasabahId)
     if (!customer) return
 
     const amount = Number(jumlahDibayar)
@@ -236,6 +284,112 @@ export function LendMapApp({ currentProfile }: { currentProfile: Profile }) {
     URL.revokeObjectURL(link.href)
   }
 
+  async function createNasabah(input: NasabahFormInput) {
+    const createdAt = new Date().toISOString()
+    const isOwnerInput = role === 'owner'
+    const payload = {
+      surveyor_id: isOwnerInput ? input.surveyorId : currentUser.id,
+      nama: input.nama.trim(),
+      alamat: input.alamat.trim(),
+      jumlah_pinjaman: input.jumlahPinjaman,
+      tanggal_mulai: input.tanggalMulai,
+      tenor_bulan: input.tenorBulan,
+      angsuran: input.angsuran,
+      tgl_jatuh_tempo: input.tglJatuhTempo,
+      status: 'aktif',
+      review_status: isOwnerInput ? 'approved' : 'draft',
+      submitted_by: currentUser.id,
+      reviewed_by: isOwnerInput ? currentUser.id : null,
+      reviewed_at: isOwnerInput ? createdAt : null,
+      review_notes: null,
+      score: 0,
+      score_label: 'At Risk',
+      created_at: createdAt,
+      updated_at: createdAt,
+    }
+    const supabase = createLendMapBrowserClient()
+    const { data, error } = await supabase
+      .from('nasabah')
+      .insert(payload)
+      .select('id, surveyor_id, nama, alamat, jumlah_pinjaman, tanggal_mulai, tenor_bulan, angsuran, tgl_jatuh_tempo, status, review_status, submitted_by, reviewed_by, reviewed_at, review_notes, score, score_label, created_at, updated_at')
+      .single()
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    const nextNasabah = data as Nasabah
+
+    setNasabah((current) => [nextNasabah, ...current])
+    if (isApprovedActiveNasabah(nextNasabah)) {
+      setSelectedNasabahId(nextNasabah.id)
+    }
+    setAuditEvents((current) => [
+      {
+        id: `audit-${current.length + 1}`,
+        actor: currentUser.full_name,
+        action: isOwnerInput ? 'INSERT_APPROVED' : 'INSERT_DRAFT',
+        table_name: 'nasabah',
+        created_at: createdAt,
+      },
+      ...current,
+    ])
+  }
+
+  async function reviewNasabah(id: string, decision: 'approved' | 'rejected') {
+    const reviewedAt = new Date().toISOString()
+    const supabase = createLendMapBrowserClient()
+    const { data, error } = await supabase
+      .from('nasabah')
+      .update({
+        review_status: decision,
+        reviewed_by: currentUser.id,
+        reviewed_at: reviewedAt,
+        review_notes: decision === 'approved' ? 'Disetujui bos' : 'Ditolak bos',
+      })
+      .eq('id', id)
+      .select('id, surveyor_id, nama, alamat, jumlah_pinjaman, tanggal_mulai, tenor_bulan, angsuran, tgl_jatuh_tempo, status, review_status, submitted_by, reviewed_by, reviewed_at, review_notes, score, score_label, created_at, updated_at')
+      .single()
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    setNasabah((current) => current.map((item) => (item.id === id ? (data as Nasabah) : item)))
+    setAuditEvents((current) => [
+      {
+        id: `audit-${current.length + 1}`,
+        actor: currentUser.full_name,
+        action: decision === 'approved' ? 'APPROVE' : 'REJECT',
+        table_name: 'nasabah',
+        created_at: reviewedAt,
+      },
+      ...current,
+    ])
+  }
+
+  async function moveNasabahToHiatus(id: string) {
+    const supabase = createLendMapBrowserClient()
+    const { data, error } = await supabase
+      .from('nasabah')
+      .update({
+        status: 'hiatus',
+        review_notes: 'Dipindah ke hiatus oleh bos',
+      })
+      .eq('id', id)
+      .select('id, surveyor_id, nama, alamat, jumlah_pinjaman, tanggal_mulai, tenor_bulan, angsuran, tgl_jatuh_tempo, status, review_status, submitted_by, reviewed_by, reviewed_at, review_notes, score, score_label, created_at, updated_at')
+      .single()
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    setNasabah((current) => current.map((item) => (item.id === id ? (data as Nasabah) : item)))
+    if (selectedNasabahId === id) {
+      setSelectedNasabahId(payableNasabah.find((item) => item.id !== id)?.id ?? '')
+    }
+  }
+
   async function logout() {
     setAuthError(null)
     const supabase = createLendMapBrowserClient()
@@ -276,10 +430,21 @@ export function LendMapApp({ currentProfile }: { currentProfile: Profile }) {
                 locationTracking={locationTracking}
               />
             ) : null}
-            {safeView === 'nasabah' ? <NasabahWorkspace nasabah={visibleNasabah} onExport={exportNasabah} role={role} /> : null}
+            {safeView === 'nasabah' ? (
+              <NasabahWorkspace
+                nasabah={visibleNasabah}
+                currentUser={currentUser}
+                onCreate={createNasabah}
+                onExport={exportNasabah}
+                onMoveToHiatus={moveNasabahToHiatus}
+                onReview={reviewNasabah}
+                role={role}
+                surveyorOptions={surveyorOptions}
+              />
+            ) : null}
             {safeView === 'setoran' ? (
               <SetoranWorkspace
-                nasabah={visibleNasabah}
+                nasabah={payableNasabah}
                 setoran={visibleSetoran}
                 selectedNasabahId={selectedNasabahId}
                 jumlahDibayar={jumlahDibayar}
@@ -767,25 +932,248 @@ function MapWorkspace({
   )
 }
 
-function NasabahWorkspace({ nasabah, role, onExport }: { nasabah: Nasabah[]; role: UserRole; onExport: () => void }) {
+function NasabahWorkspace({
+  nasabah,
+  currentUser,
+  role,
+  onCreate,
+  onExport,
+  onMoveToHiatus,
+  onReview,
+  surveyorOptions,
+}: {
+  nasabah: Nasabah[]
+  currentUser: Profile
+  role: UserRole
+  onCreate: (input: NasabahFormInput) => Promise<void>
+  onExport: () => void
+  onMoveToHiatus: (id: string) => Promise<void>
+  onReview: (id: string, decision: 'approved' | 'rejected') => Promise<void>
+  surveyorOptions: Pick<Profile, 'id' | 'full_name'>[]
+}) {
+  const [isFormOpen, setIsFormOpen] = useState(false)
+  const [isSubmittingNasabah, setIsSubmittingNasabah] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [form, setForm] = useState({
+    nama: '',
+    alamat: '',
+    jumlahPinjaman: '2000000',
+    tanggalMulai: '2026-06-14',
+    tenorBulan: '10',
+    angsuran: '220000',
+    tglJatuhTempo: '10',
+    surveyorId: role === 'owner' ? '' : currentUser.id,
+  })
+  const approvedNasabah = nasabah.filter((item) => item.review_status === 'approved')
+  const draftNasabah = nasabah.filter((item) => item.review_status === 'draft')
+  const rejectedNasabah = nasabah.filter((item) => item.review_status === 'rejected')
+  const activeNasabah = approvedNasabah.filter((item) => item.status !== 'hiatus')
+  const hiatusNasabah = approvedNasabah.filter((item) => item.status === 'hiatus')
+  const visibleArchive = role === 'owner' ? [...hiatusNasabah, ...rejectedNasabah] : rejectedNasabah
+
+  function updateForm(field: keyof typeof form, value: string) {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  async function submitNasabahForm() {
+    const jumlahPinjaman = Number(form.jumlahPinjaman)
+    const tenorBulan = Number(form.tenorBulan)
+    const angsuran = Number(form.angsuran)
+    const tglJatuhTempo = Number(form.tglJatuhTempo)
+
+    if (!form.nama.trim() || !form.alamat.trim()) {
+      setFormError('Nama dan alamat wajib diisi.')
+      return
+    }
+    if (!jumlahPinjaman || jumlahPinjaman <= 0 || !tenorBulan || tenorBulan <= 0 || !angsuran || angsuran <= 0) {
+      setFormError('Pinjaman, tenor, dan angsuran harus lebih dari nol.')
+      return
+    }
+    if (!tglJatuhTempo || tglJatuhTempo < 1 || tglJatuhTempo > 28) {
+      setFormError('Tanggal jatuh tempo harus 1 sampai 28.')
+      return
+    }
+    if (role === 'owner' && !form.surveyorId.trim()) {
+      setFormError('ID surveyor wajib diisi untuk nasabah baru dari bos.')
+      return
+    }
+
+    setIsSubmittingNasabah(true)
+    setActionError(null)
+    try {
+      await onCreate({
+        nama: form.nama,
+        alamat: form.alamat,
+        jumlahPinjaman,
+        tanggalMulai: form.tanggalMulai,
+        tenorBulan,
+        angsuran,
+        tglJatuhTempo,
+        surveyorId: form.surveyorId.trim(),
+      })
+      setForm((current) => ({
+        ...current,
+        nama: '',
+        alamat: '',
+        jumlahPinjaman: '2000000',
+        tenorBulan: '10',
+        angsuran: '220000',
+        tglJatuhTempo: '10',
+      }))
+      setFormError(null)
+      setIsFormOpen(false)
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Gagal menyimpan nasabah.')
+    } finally {
+      setIsSubmittingNasabah(false)
+    }
+  }
+
+  async function runNasabahAction(action: () => Promise<void>) {
+    setActionError(null)
+    try {
+      await action()
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Aksi nasabah gagal.')
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <SectionTitle icon={<Users size={20} />} title="Nasabah" subtitle={role === 'owner' ? 'Daftar semua nasabah dan scoring' : 'Daftar nasabah assign ke surveyor'} />
-        <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-river px-4 py-3 text-sm font-black text-white" onClick={onExport}>
-          <Download size={18} />
-          Export CSV
-        </button>
+        <SectionTitle
+          icon={<Users size={20} />}
+          title="Nasabah"
+          subtitle={role === 'owner' ? 'Bos dapat input langsung, verifikasi draft, dan arsip hiatus' : 'Surveyor membuat draft untuk diverifikasi bos'}
+        />
+        <div className="grid gap-2 sm:flex">
+          <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-moss px-4 py-3 text-sm font-black text-white" onClick={() => setIsFormOpen((value) => !value)}>
+            <Plus size={18} />
+            Tambah Nasabah
+          </button>
+          <button className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-river px-4 py-3 text-sm font-black text-white" onClick={onExport}>
+            <Download size={18} />
+            Export CSV
+          </button>
+        </div>
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        {nasabah.map((item) => (
+
+      {isFormOpen ? (
+        <div className="rounded-lg border border-river/25 bg-white p-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="grid gap-2 text-sm font-bold">
+              Nama
+              <input className="min-h-12 rounded-lg border border-ink/15 px-3" value={form.nama} onChange={(event) => updateForm('nama', event.target.value)} />
+            </label>
+            <label className="grid gap-2 text-sm font-bold">
+              Alamat
+              <input className="min-h-12 rounded-lg border border-ink/15 px-3" value={form.alamat} onChange={(event) => updateForm('alamat', event.target.value)} />
+            </label>
+            <label className="grid gap-2 text-sm font-bold">
+              Jumlah pinjaman
+              <input className="min-h-12 rounded-lg border border-ink/15 px-3" inputMode="numeric" value={form.jumlahPinjaman} onChange={(event) => updateForm('jumlahPinjaman', event.target.value)} />
+            </label>
+            <label className="grid gap-2 text-sm font-bold">
+              Tanggal mulai
+              <input className="min-h-12 rounded-lg border border-ink/15 px-3" type="date" value={form.tanggalMulai} onChange={(event) => updateForm('tanggalMulai', event.target.value)} />
+            </label>
+            <label className="grid gap-2 text-sm font-bold">
+              Tenor bulan
+              <input className="min-h-12 rounded-lg border border-ink/15 px-3" inputMode="numeric" value={form.tenorBulan} onChange={(event) => updateForm('tenorBulan', event.target.value)} />
+            </label>
+            <label className="grid gap-2 text-sm font-bold">
+              Angsuran
+              <input className="min-h-12 rounded-lg border border-ink/15 px-3" inputMode="numeric" value={form.angsuran} onChange={(event) => updateForm('angsuran', event.target.value)} />
+            </label>
+            <label className="grid gap-2 text-sm font-bold">
+              Tanggal jatuh tempo
+              <input className="min-h-12 rounded-lg border border-ink/15 px-3" inputMode="numeric" value={form.tglJatuhTempo} onChange={(event) => updateForm('tglJatuhTempo', event.target.value)} />
+            </label>
+            {role === 'owner' ? (
+              <label className="grid gap-2 text-sm font-bold">
+                Surveyor
+                <select className="min-h-12 rounded-lg border border-ink/15 px-3" value={form.surveyorId} onChange={(event) => updateForm('surveyorId', event.target.value)}>
+                  <option value="">{surveyorOptions.length === 0 ? 'Belum ada surveyor aktif' : 'Pilih surveyor'}</option>
+                  {surveyorOptions.map((surveyor) => <option key={surveyor.id} value={surveyor.id}>{surveyor.full_name}</option>)}
+                </select>
+              </label>
+            ) : null}
+          </div>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button className="inline-flex min-h-12 items-center justify-center rounded-lg bg-moss px-4 py-3 text-sm font-black text-white" disabled={isSubmittingNasabah} onClick={submitNasabahForm}>
+              {isSubmittingNasabah ? 'Menyimpan...' : role === 'owner' ? 'Simpan sebagai aktif' : 'Kirim draft ke bos'}
+            </button>
+            <button className="inline-flex min-h-12 items-center justify-center rounded-lg border border-ink/10 bg-white px-4 py-3 text-sm font-black text-ink" onClick={() => setIsFormOpen(false)}>
+              Batal
+            </button>
+          </div>
+          {formError ? <p className="mt-3 text-sm font-bold text-clay">{formError}</p> : null}
+        </div>
+      ) : null}
+
+      <NasabahSection
+        emptyCopy="Belum ada nasabah aktif."
+        items={activeNasabah}
+        onMoveToHiatus={role === 'owner' ? (id) => runNasabahAction(() => onMoveToHiatus(id)) : undefined}
+        title="Data aktif"
+        variant="active"
+      />
+
+      <NasabahSection
+        emptyCopy={role === 'owner' ? 'Belum ada draft yang menunggu verifikasi.' : 'Belum ada draft yang dikirim.'}
+        items={draftNasabah}
+        onReview={role === 'owner' ? (id, decision) => runNasabahAction(() => onReview(id, decision)) : undefined}
+        title={role === 'owner' ? 'Menunggu verifikasi bos' : 'Draft saya'}
+        variant="draft"
+      />
+      {actionError ? <p className="rounded-lg border border-clay/30 bg-clay/10 p-3 text-sm font-bold text-clay">{actionError}</p> : null}
+
+      {visibleArchive.length > 0 ? (
+        <NasabahSection
+          emptyCopy=""
+          items={visibleArchive}
+          title={role === 'owner' ? 'Record arsip' : 'Draft ditolak'}
+          variant="archive"
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function NasabahSection({
+  emptyCopy,
+  items,
+  onMoveToHiatus,
+  onReview,
+  title,
+  variant,
+}: {
+  emptyCopy: string
+  items: Nasabah[]
+  onMoveToHiatus?: (id: string) => void | Promise<void>
+  onReview?: (id: string, decision: 'approved' | 'rejected') => void | Promise<void>
+  title: string
+  variant: 'active' | 'draft' | 'archive'
+}) {
+  const titleClass = variant === 'draft' ? 'text-river' : variant === 'archive' ? 'text-ink/55' : 'text-ink'
+
+  return (
+    <section>
+      <h3 className={`text-base font-black ${titleClass}`}>{title}</h3>
+      {items.length === 0 ? <p className="mt-3 rounded-lg border border-dashed border-ink/15 bg-white p-4 text-sm font-bold text-ink/55">{emptyCopy}</p> : null}
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {items.map((item) => (
           <div key={item.id} className="rounded-lg border border-ink/10 bg-white p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <h3 className="text-lg font-black">{item.nama}</h3>
+                <h4 className="text-lg font-black">{item.nama}</h4>
                 <p className="text-sm text-ink/60">{item.alamat}</p>
               </div>
-              <ScoreBadge label={item.score_label} score={item.score} />
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <ReviewBadge status={item.review_status} />
+                {item.review_status === 'approved' ? <ScoreBadge label={item.score_label} score={item.score} /> : null}
+              </div>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <MiniFact label="Pinjaman" value={formatRupiah(item.jumlah_pinjaman)} />
@@ -793,10 +1181,26 @@ function NasabahWorkspace({ nasabah, role, onExport }: { nasabah: Nasabah[]; rol
               <MiniFact label="Jatuh tempo" value={`Tanggal ${item.tgl_jatuh_tempo}`} />
               <MiniFact label="Status" value={item.status} />
             </div>
+            {item.review_notes ? <p className="mt-3 text-sm font-bold text-ink/60">{item.review_notes}</p> : null}
+            {onReview ? (
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <button className="min-h-11 rounded-lg bg-moss px-3 py-2 text-sm font-black text-white" onClick={() => onReview(item.id, 'approved')}>
+                  Verifikasi
+                </button>
+                <button className="min-h-11 rounded-lg bg-clay px-3 py-2 text-sm font-black text-white" onClick={() => onReview(item.id, 'rejected')}>
+                  Tolak
+                </button>
+              </div>
+            ) : null}
+            {onMoveToHiatus && item.review_status === 'approved' && item.status !== 'hiatus' ? (
+              <button className="mt-4 min-h-11 w-full rounded-lg border border-ink/10 bg-field px-3 py-2 text-sm font-black text-ink" onClick={() => onMoveToHiatus(item.id)}>
+                Pindahkan ke hiatus
+              </button>
+            ) : null}
           </div>
         ))}
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -933,6 +1337,12 @@ function MiniFact({ label, value }: { label: string; value: string }) {
 function ScoreBadge({ label, score }: { label: string; score: number }) {
   const className = label === 'Excellent' ? 'bg-moss text-white' : label === 'Good' ? 'bg-river text-white' : label === 'Fair' ? 'bg-maize text-ink' : 'bg-clay text-white'
   return <span className={`rounded-full px-3 py-1 text-xs font-black ${className}`}>{label} · {score}</span>
+}
+
+function ReviewBadge({ status }: { status: Nasabah['review_status'] }) {
+  const className = status === 'approved' ? 'bg-moss text-white' : status === 'draft' ? 'bg-maize text-ink' : 'bg-clay text-white'
+  const label = status === 'approved' ? 'Approved' : status === 'draft' ? 'Draft' : 'Rejected'
+  return <span className={`rounded-full px-3 py-1 text-xs font-black ${className}`}>{label}</span>
 }
 
 function PaymentBadge({ status }: { status: Setoran['status_bayar'] }) {

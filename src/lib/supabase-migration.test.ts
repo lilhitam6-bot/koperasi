@@ -57,4 +57,18 @@ describe('Supabase foundation migration', () => {
     expect(text).toContain('create publication supabase_realtime')
     expect(text).toContain('alter publication supabase_realtime add table public.surveyor_locations')
   })
+
+  it('adds owner review workflow for nasabah drafts and hiatus records', () => {
+    const text = sql()
+
+    expect(text).toContain("alter table public.nasabah add column if not exists review_status text not null default 'approved'")
+    expect(text).toContain("status in ('aktif', 'lunas', 'macet', 'hiatus')")
+    expect(text).toContain("review_status in ('draft', 'approved', 'rejected')")
+    expect(text).toContain('create policy "surveyor_insert_own_nasabah"')
+    expect(text).toContain("review_status = 'draft'")
+    expect(text).toContain("status <> 'hiatus'")
+    expect(text).toContain('create policy "surveyor_update_own_draft_nasabah"')
+    expect(text).toContain("customer.review_status = 'approved'")
+    expect(text).toContain("customer.status = 'aktif'")
+  })
 })

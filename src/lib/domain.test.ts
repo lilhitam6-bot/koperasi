@@ -3,6 +3,8 @@ import {
   calculateDashboardSummary,
   calculateScore,
   determineStatusBayar,
+  isApprovedActiveNasabah,
+  isNasabahVisibleToSurveyor,
   projectOfflineQueue,
   toCsv,
 } from './domain'
@@ -20,6 +22,11 @@ const nasabah: Nasabah[] = [
     angsuran: 220000,
     tgl_jatuh_tempo: 10,
     status: 'aktif',
+    review_status: 'approved',
+    submitted_by: 's-1',
+    reviewed_by: 'owner-1',
+    reviewed_at: '2026-01-10T00:00:00.000Z',
+    review_notes: null,
     score: 80,
     score_label: 'Excellent',
     created_at: '2026-01-10T00:00:00.000Z',
@@ -36,6 +43,11 @@ const nasabah: Nasabah[] = [
     angsuran: 210000,
     tgl_jatuh_tempo: 5,
     status: 'macet',
+    review_status: 'approved',
+    submitted_by: 's-2',
+    reviewed_by: 'owner-1',
+    reviewed_at: '2026-02-05T00:00:00.000Z',
+    review_notes: null,
     score: 35,
     score_label: 'At Risk',
     created_at: '2026-02-05T00:00:00.000Z',
@@ -104,6 +116,19 @@ describe('dashboard projections', () => {
       totalSetoranBulanIni: 320000,
       nasabahMacet: 1,
     })
+  })
+})
+
+describe('nasabah lifecycle helpers', () => {
+  it('allows setoran only for approved active nasabah', () => {
+    expect(isApprovedActiveNasabah(nasabah[0])).toBe(true)
+    expect(isApprovedActiveNasabah({ ...nasabah[0], review_status: 'draft' })).toBe(false)
+    expect(isApprovedActiveNasabah({ ...nasabah[0], status: 'hiatus' })).toBe(false)
+  })
+
+  it('hides hiatus records from surveyor workspaces', () => {
+    expect(isNasabahVisibleToSurveyor(nasabah[0])).toBe(true)
+    expect(isNasabahVisibleToSurveyor({ ...nasabah[0], status: 'hiatus' })).toBe(false)
   })
 })
 
